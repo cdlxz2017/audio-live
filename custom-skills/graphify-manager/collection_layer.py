@@ -244,6 +244,7 @@ class CollectionLayer:
 async def main():
     watch_paths = [
         '/home/ai/projects/tiandao-system',
+        '/home/ai/.openclaw/workspace/projects/lingyi-cms',
         '/home/ai/.openclaw/workspace'
     ]
     

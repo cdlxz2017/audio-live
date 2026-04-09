@@ -270,8 +270,8 @@ app.listen(PORT, () => {
   }
 
   updateOverallStatus() {
-    const allRunning = Object.values(this.status).slice(0, 3).every(
-      s => s.state === 'running'
+    const allRunning = ['collection', 'bridge', 'query'].every(
+      k => this.status[k].state === 'running'
     );
     this.status.overall = allRunning ? 'healthy' : 'degraded';
   }

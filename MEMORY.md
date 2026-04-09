@@ -52,6 +52,48 @@
 
 ---
 
+## 🔒 系统安全档案 SOP（2026-04-10）
+
+### 安全软件安装流程（强制）
+
+**每次安装安全类软件后，必须执行以下流程：**
+
+1. **安装并配置完成**
+2. **将配置复制到** `~/.config/security/<软件名>/`
+3. **提交 Git**
+   ```bash
+   cd ~/.config && git add security/<软件名>/
+   git commit -m "安全: <软件名> <版本> <简要说明>"
+   ```
+
+### 安全档案目录结构
+
+```
+~/.config/security/
+├── README.md              ← 安全档案总手册
+├── INSTALLED-APPS.md      ← 已安装安全软件清单
+├── ossec/                 ← OSSEC HIDS 配置
+│   ├── ossec.conf
+│   └── local_internal_options.conf
+├── fail2ban/              ← fail2ban 配置
+│   └── jail.local
+├── ufw/                   ← 防火墙规则快照
+│   ├── ufw-status.txt
+│   └── iptables-rules.txt
+└── notes/
+    └── operation-log.md   ← 操作记录
+```
+
+### 已纳入档案的安全软件
+
+| 软件 | 版本 | 纳入日期 |
+|------|------|----------|
+| OSSEC HIDS | 4.0.0 | 2026-04-10 |
+| fail2ban | Ubuntu 0.7.10-2 | 2026-04-10 |
+| UFW | 0.36.2 | 2026-04-10 |
+
+---
+
 ## 📦 lingyi-crm 系统文档
 - Git仓库：`/home/ai/.openclaw/workspace/projects/lingyi-cms/`（本地）
 - 修改日志：`projects/lingyi-cms/CHANGELOG.md`
@@ -143,6 +185,24 @@ personal_memories: 3927条 (4月3日后停止写入，用于 backfill 回填)
 memory_summaries: 318条+ (4月9日起 summary-extractor 实时产出)
 Neo4j PersonalMemory: 927节点, 318有content (2026-04-09 20:06)
 ```
+
+### Graphify 实体对齐 + 查询路由（2026-04-09 完成）
+
+**query-layer.js**（统一查询层）：
+- Neo4j Graphify 查询 + PostgreSQL memories/memory_summaries 并行查询
+- 174 个代码关键词 + 记忆关键词 + 项目关键词，中英文混合路由
+- 结果合并按 score 排序，去重
+- Graphify 结果附加 alignedMemories（PostgreSQL memory_summaries 对齐信息）
+- API: `POST http://localhost:31234/query`
+
+**bridge-layer.js**（对齐逻辑升级）：
+- 对齐目标改为 memory_summaries（不再用 PersonalMemory/Memory_default）
+- 评分策略：文本重叠 + 节点名匹配(+5) + 文件名匹配(+3) + 路径关键词交叉匹配(+2)
+- 写入 Neo4j: `GraphifyCode -[ALIGNED_TO]-> Memory_summary`
+
+**backfill-alignments.js**（一次性回填）：
+- 28 个现有 GraphifyCode 节点，6 条对齐关系已建立
+- 运行命令：`node /home/ai/.openclaw/workspace/custom-skills/graphify-manager/backfill-alignments.js`
 
 ### 持续同步机制（2026-04-09 建立）
 

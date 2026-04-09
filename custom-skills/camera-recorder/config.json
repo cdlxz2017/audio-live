@@ -1,0 +1,22 @@
+{
+  "video_dir": "/home/ai/videos",
+  "email_to": "cdlxz2017@qq.com",
+  "motion_still_threshold_sec": 180,
+  "video_codec": "libx265",
+  "h265_crf": 23,
+  "video_maxrate": "2M",
+  "video_bufsize": "4M",
+  "video_bitrate": "1M",
+  "whisper_model": "large-v3-turbo",
+  "db": {
+    "host": "localhost",
+    "port": 5432,
+    "user": "openclaw_ai",
+    "password": "zyxrcy910128",
+    "database": "openclaw_memory"
+  },
+  "disk_space_min_gb": 1,
+  "ffmpeg_audio_codec": "aac",
+  "ffmpeg_audio_bitrate": "128k",
+  "ffmpeg_sample_rate": 48000
+}

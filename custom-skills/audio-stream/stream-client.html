@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>音频录制</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: #16213e;
+    border-radius: 16px;
+    padding: 36px 28px;
+    width: 100%;
+    max-width: 420px;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  p.sub { color: #888; font-size: 14px; margin-bottom: 24px; }
+  .input-group { margin-bottom: 18px; }
+  label { display: block; font-size: 13px; color: #aaa; margin-bottom: 8px; text-align: left; }
+  input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #2a3a5e;
+    border-radius: 10px;
+    background: #0f3460;
+    color: #fff;
+    font-size: 16px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus { border-color: #4a8fe7; }
+  input::placeholder { color: #556; }
+  .btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+    margin-top: 10px;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-test { background: #4a8fe7; color: #fff; }
+  .btn-test:hover:not(:disabled) { opacity: 0.9; }
+  .btn-rec {
+    background: #e74c3c;
+    color: #fff;
+    font-size: 18px;
+    padding: 18px;
+    display: none;
+  }
+  .btn-rec:hover:not(:disabled) { opacity: 0.9; }
+  .btn-rec.recording {
+    background: #c0392b;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(231,76,60,0.6); }
+    50% { box-shadow: 0 0 0 12px rgba(231,76,60,0); }
+  }
+  .status {
+    margin-top: 20px;
+    padding: 13px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 500;
+    display: none;
+  }
+  .status.ok { display: block; background: #0d3d2d; color: #4ade80; border: 1px solid #22c55e; }
+  .status.fail { display: block; background: #3d0d0d; color: #f87171; border: 1px solid #ef4444; }
+  .spinner {
+    display: none;
+    width: 20px; height: 20px;
+    border: 3px solid #333;
+    border-top-color: #4a8fe7;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hint { font-size: 12px; color: #555; margin-top: 14px; }
+  .divider { border: none; border-top: 1px solid #2a3a5e; margin: 20px 0; }
+  .rec-info { display: none; margin-top: 14px; font-size: 13px; color: #888; }
+  .rec-info.active { display: block; }
+  .timer { font-size: 28px; font-weight: 700; color: #e74c3c; font-variant-numeric: tabular-nums; }
+  .dot { animation: blink 1s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+</style>
+</head>
+<body>
+<div class="card">
+  <p style="font-size:11px;color:#666;margin-bottom:4px">v2</p>
+  <h1>🎙️ 音频录制系统</h1>
+  <p class="sub">检测网络通过后，即可开始录音</p>
+
+  <div class="input-group">
+    <label>服务器地址</label>
+    <input type="text" id="serverIp" value="192.168.31.200:18792" />
+  </div>
+
+  <button class="btn btn-test" id="testBtn" onclick="testConnect()">
+    <span id="btnText">检测网络</span>
+    <div class="spinner" id="spinner"></div>
+  </button>
+
+  <div class="status" id="status"></div>
+
+  <hr class="divider" id="recDivider" style="display:none" />
+
+  <!-- 录音区域 -->
+  <div id="recSection" style="display:none">
+    <div class="timer" id="timer">00:00</div>
+    <p style="font-size:13px;color:#666;margin-top:4px" id="recHint">点击按钮开始录音</p>
+    <button class="btn btn-rec" id="recBtn" onclick="toggleRec()">
+      <span id="recBtnText">🔴 开始录音</span>
+    </button>
+    <div class="rec-info" id="recInfo">
+      <span id="chunkCount">0</span> chunks 已发送
+    </div>
+  </div>
+
+  <p class="hint" id="hint"></p>
+</div>
+
+<script>
+  let ws = null;
+  let mediaRecorder = null;
+  let isRecording = false;
+  let sessionId = null;
+  let recStartTime = null;
+  let timerInterval = null;
+  let serverUrl = null;
+
+  async function testConnect() {
+    const ip = document.getElementById('serverIp').value.trim();
+    if (!ip) { showStatus('fail', '请输入服务器地址'); return; }
+    alert('开始检测: ' + ip);
+
+    let url = ip.startsWith('ws') ? ip : 'ws://' + ip;
+    serverUrl = url;
+
+    setLoading(true);
+    showStatus('', '');
+
+    try {
+      await new Promise((resolve, reject) => {
+        const testWs = new WebSocket(url);
+        const timer = setTimeout(() => { testWs.close(); reject(new Error('连接超时（5秒）')); }, 5000);
+        testWs.onopen = () => { clearTimeout(timer); testWs.close(); resolve(); };
+        testWs.onerror = () => { clearTimeout(timer); reject(new Error('WebSocket 连接失败')); };
+      });
+
+      showStatus('ok', '✅ 网络畅通，可以开始录音');
+      const recSection = document.getElementById('recSection');
+      const recDivider = document.getElementById('recDivider');
+      if (recSection) recSection.style.display = 'block';
+      if (recDivider) recDivider.style.display = 'block';
+      document.getElementById('hint').textContent = '检测通过，请开始录音';
+      alert('✅ 检测通过！录音按钮已出现，请向下滚动查看');
+    } catch (e) {
+      showStatus('fail', '❌ 网络有问题，不能运行\n' + e.message);
+      document.getElementById('recSection').style.display = 'none';
+      document.getElementById('recDivider').style.display = 'none';
+      document.getElementById('hint').textContent = '请确认服务器已启动，且地址端口正确';
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function toggleRec() {
+    if (!isRecording) {
+      await startRec();
+    } else {
+      stopRec();
+    }
+  }
+
+  async function startRec() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        codec: 'opus'
+      }});
+
+      // 连接服务器
+      ws = new WebSocket(serverUrl);
+      await new Promise((resolve, reject) => {
+        ws.onopen = resolve;
+        ws.onerror = () => reject(new Error('服务器连接失败'));
+        setTimeout(() => reject(new Error('连接超时')), 5000);
+      });
+
+      // 开始录音会话
+      ws.send(JSON.stringify({ type: 'start' }));
+      sessionId = Date.now().toString();
+
+      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 });
+
+      let chunkCount = 0;
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = reader.result.split(',')[1];
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'audio', data: base64 }));
+              chunkCount++;
+              document.getElementById('chunkCount').textContent = chunkCount;
+            }
+          };
+          reader.readAsDataURL(e.data);
+        }
+      };
+
+      mediaRecorder.start(1000); // 每秒一块
+      isRecording = true;
+      recStartTime = Date.now();
+
+      // UI 更新
+      const recBtn = document.getElementById('recBtn');
+      recBtn.classList.add('recording');
+      document.getElementById('recBtnText').textContent = '⏹ 停止录音';
+      document.getElementById('recHint').textContent = '录音中...';
+      document.getElementById('recInfo').classList.add('active');
+
+      // 计时器
+      timerInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - recStartTime) / 1000);
+        const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const s = String(elapsed % 60).padStart(2, '0');
+        document.getElementById('timer').textContent = m + ':' + s;
+      }, 1000);
+
+    } catch (e) {
+      alert('无法开始录音：' + e.message);
+    }
+  }
+
+  function stopRec() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'stop' }));
+      ws.close();
+    }
+
+    isRecording = false;
+    clearInterval(timerInterval);
+
+    // UI 重置
+    document.getElementById('recBtn').classList.remove('recording');
+    document.getElementById('recBtnText').textContent = '🔴 开始录音';
+    document.getElementById('recHint').textContent = '录音已停止，已发送到服务器';
+    document.getElementById('timer').textContent = '00:00';
+  }
+
+  function showStatus(type, msg) {
+    const el = document.getElementById('status');
+    el.className = 'status ' + type;
+    el.style.display = type ? 'block' : 'none';
+    el.textContent = msg;
+  }
+
+  function setLoading(on) {
+    const btn = document.getElementById('testBtn');
+    btn.disabled = on;
+    document.getElementById('btnText').style.display = on ? 'none' : 'inline';
+    document.getElementById('spinner').style.display = on ? 'block' : 'none';
+  }
+</script>
+</body>
+</html>

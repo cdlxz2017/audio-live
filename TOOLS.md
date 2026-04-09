@@ -86,3 +86,21 @@ node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
 ```
 
 详细报告见：`memory/MODEL-SCORE-2026-04-04.md`
+
+---
+
+## 本地大模型 (Ollama)
+
+| 模型 | 大小 | 显存 | 状态 |
+|------|------|------|------|
+| gemma4:26b | 18 GB | 16GB VRAM | ✅ 正常，39 tok/s |
+| gemma4:31b | 20 GB | 16GB VRAM | ❌ GPU OOM |
+| bge-m3:latest | 1.2 GB | — | ✅ 向量嵌入 |
+
+**GPU**: AMD Radeon 8060S (Ryzen AI MAX+ 395 集成) | VRAM: 16 GB
+
+## 记忆召回系统 (2026-04-10)
+
+- 文档: `memory-system/docs/RECALL-DESIGN.md`
+- Git: `f653af4 feat: 记忆召回系统 Week1+2 升级`
+- recall_logs bug 已修复 (user_id NOT NULL / 空vector)

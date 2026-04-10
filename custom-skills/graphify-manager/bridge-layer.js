@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // bridge-layer.js - 批量处理 + 去重 + Neo4j批量写入 + 实体对齐 (memory_summaries版)
+// C2: 新增节点时同步生成 embedding （异步非阻塞，失败不阻断写入）
 const neo4j = require('neo4j-driver');
 const Redis = require('ioredis');
 const { Client } = require('pg');
@@ -8,6 +9,7 @@ const fs = require('fs');
 const { promisify } = require('util');
 const { exec } = require('child_process');
 const execAsync = promisify(exec);
+const { buildEmbedText, embedBatch } = require('./embedder');
 
 class GraphifyBridge {
   constructor(config) {
@@ -175,7 +177,22 @@ class GraphifyBridge {
       const aligned = await this.alignEntities(session, extractions);
       this.metrics.aligned += aligned;
 
-      // 4. 确认所有事件
+      // 4. C2: 异步增量 embedding（不阻塞主流程）
+      const allNewNodes = extractions.flatMap(({ filePath, structure }) =>
+        (structure.nodes || []).map(n => ({
+          id: n.id,
+          name: n.name,
+          type: n.type,
+          tags: n.tags ? n.tags.join(',') : '',
+          file_path: filePath
+        }))
+      );
+      // 不 await：让 embedding 异步运行，不阻塞事件确认
+      this.syncEmbeddingsAsync(allNewNodes).catch(e =>
+        console.warn('[bridge] C2 async embed 异常:', e.message)
+      );
+
+      // 5. 确认所有事件
       for (const { eventId } of events) {
         await this.redisClient.xack(this.config.inputStream, this.config.consumerGroup, eventId);
       }
@@ -284,6 +301,94 @@ class GraphifyBridge {
       console.log('[bridge] 实体对齐错误:', e.message.split('\n')[0]);
     }
     return aligned;
+  }
+
+  // ── C2: 增量 embedding 同步 ────────────────────────────────────────────
+  /**
+   * 新写入节点后，异步生成并写入 embedding
+   * - 非阻塞：Ollama 不可用时跟踪警告但不抛异常
+   * - 重复节点 upsert（embedding 已存在时更新）
+   * @param {Array<{id,name,type,tags,file_path}>} nodes Neo4j 写入的节点列表
+   */
+  async syncEmbeddingsAsync(nodes) {
+    if (!this.pgClient || nodes.length === 0) return;
+    // 构建 embed items
+    const items = nodes.map(n => ({
+      node_id: n.id,
+      name: n.name || '',
+      type: n.type || '',
+      tags: n.tags || '',
+      file_path: n.file_path || n.filePath || '',
+      embed_text: buildEmbedText({
+        name: n.name,
+        type: n.type,
+        tags: n.tags,
+        file_path: n.file_path || n.filePath
+      })
+    }));
+
+    // 生成 embedding，并发，不阻塞当前流
+    const embResults = await embedBatch(items, {
+      model: 'bge-m3:latest',
+      ollamaUrl: this.config.ollamaUrl || 'http://localhost:11434/api/embeddings',
+      concurrency: 2,
+    }).catch(err => {
+      console.warn('[bridge] embedBatch 整体失败:', err.message);
+      return null;
+    });
+    if (!embResults) return;
+
+    // 浏选有效结果
+    const toInsert = [];
+    for (let i = 0; i < embResults.length; i++) {
+      const er = embResults[i];
+      const item = items[i];
+      if (er.embedding) {
+        toInsert.push({
+          node_id: item.node_id,
+          node_name: item.name,
+          node_type: item.type,
+          tags: item.tags,
+          file_path: item.file_path,
+          embed_text: item.embed_text || '',
+          embedding: JSON.stringify(er.embedding)
+        });
+      } else if (er.error !== 'empty_text') {
+        console.warn('[bridge] embedding 失败', item.node_id, er.error);
+      }
+    }
+
+    if (toInsert.length === 0) return;
+
+    // 批量 upsert
+    const values = [];
+    const placeholders = toInsert.map((r, i) => {
+      const base = i * 7;
+      values.push(r.node_id, r.node_name, r.node_type, r.tags, r.file_path, r.embed_text, r.embedding + '::vector');
+      // 注：::vector 转换需在 SQL 中处理
+      return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7}::vector)`;
+    }).join(',');
+
+    try {
+      const vals2 = [];
+      const ph2 = toInsert.map((r, i) => {
+        const base = i * 7;
+        vals2.push(r.node_id, r.node_name, r.node_type, r.tags, r.file_path, r.embed_text, r.embedding);
+        return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7}::vector)`;
+      }).join(',');
+      await this.pgClient.query(
+        `INSERT INTO graphify_code_embeddings (node_id,node_name,node_type,tags,file_path,embed_text,embedding)
+         VALUES ${ph2}
+         ON CONFLICT (node_id) DO UPDATE SET
+           node_name=EXCLUDED.node_name, node_type=EXCLUDED.node_type, tags=EXCLUDED.tags,
+           file_path=EXCLUDED.file_path, embed_text=EXCLUDED.embed_text, embedding=EXCLUDED.embedding,
+           updated_at=NOW()`,
+        vals2
+      );
+      console.log('[bridge] C2 embedding 写入:', toInsert.length, '条');
+    } catch (e) {
+      console.warn('[bridge] C2 embedding 写入失败:', e.message.substring(0, 100));
+    }
   }
 
   async extractCode(filePath, fileExt) {

@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // custom-skills/graphify-manager/query-layer.js
 // 统一查询层：Graphify (Neo4j) + 记忆系统 (PostgreSQL) + 语义路由
+// C2: 新增向量语义搜索路径，与全文索引并行，结果合并
 const neo4j = require('neo4j-driver');
 const { Client } = require('pg');
 const NodeCache = require('node-cache');
 const { promisify } = require('util');
 const { exec } = require('child_process');
 const execAsync = promisify(exec);
+const { embedOne } = require('./embedder');
 
 class QueryLayer {
   constructor(config = {}) {
@@ -30,7 +32,7 @@ class QueryLayer {
     this.pgClient = null;
     this.cache = new NodeCache({ stdTTL: this.config.cacheTtl, checkperiod: 60 });
 
-    this.stats = { totalQueries: 0, cacheHits: 0, graphifyQueries: 0, memoryQueries: 0, failedQueries: 0 };
+    this.stats = { totalQueries: 0, cacheHits: 0, graphifyQueries: 0, memoryQueries: 0, vectorQueries: 0, failedQueries: 0 };
 
     // ===== 路由关键词 =====
     this.codeKeywords = [
@@ -153,12 +155,15 @@ class QueryLayer {
         return cached;
       }
 
-      const [graphifyResults, memoryResults] = await Promise.all([
+      const [graphifyResults, vectorResults, memoryResults] = await Promise.all([
         route.includeGraphify ? this.queryGraphify(userQuery, route) : [],
+        route.includeGraphify ? this.queryGraphifyVector(userQuery, route) : [],
         route.includeMemory ? this.queryMemory(userQuery, route) : []
       ]);
+      // C2: 合并全文索引 + 向量结果（去重后按得分排序）
+      const mergedGraphify = this._mergeGraphifyResults(graphifyResults, vectorResults, route);
 
-      const merged = this.mergeResults(graphifyResults, memoryResults, route);
+      const merged = this.mergeResults(mergedGraphify, memoryResults, route);
       const enhanced = await this.enrichWithAlignments(merged, route);
       const finalResults = this.annotateResults(enhanced, route);
       this.cache.set(cacheKey, finalResults);
@@ -169,6 +174,117 @@ class QueryLayer {
       return [];
     }
   }
+
+  // ── C2: 向量语义搜索 ────────────────────────────────────────────────
+
+  /**
+   * queryGraphifyVector: 基于 BGE-m3 向量的语义搜索
+   * 从 graphify_code_embeddings (PostgreSQL) 检索最近邻
+   * 得分归一化：余弦相似度 [0,1]（内积转换）
+   */
+  async queryGraphifyVector(userQuery, route) {
+    if (!this.pgClient) return [];
+    this.stats.vectorQueries++;
+    try {
+      // 1. 生成查询向量
+      const queryEmbedding = await embedOne(userQuery.substring(0, 500), 'bge-m3:latest', this.config.ollamaUrl);
+
+      // 2. 向量近邻搜索（HNSW index，内积距离；BGE-m3 向量已归一化，<#> 取反即余弦相似度）
+      //    得分公式：cosine_sim = 1 - (-<#>)/max_ip_norm
+      //    实用做法：用 (1 + ip_dist) / 2 归一化到 [0,1]（ip_dist 在 [-1,1] 之间）
+      const vectorJson = JSON.stringify(queryEmbedding);
+      const limit = Math.min(route.maxResults, 15);
+
+      const result = await this.pgClient.query(
+        `SELECT
+           e.node_id,
+           e.node_name,
+           e.node_type,
+           e.tags,
+           e.file_path,
+           e.embed_text,
+           1 - (e.embedding <=> $1::vector) AS cosine_sim
+         FROM graphify_code_embeddings e
+         ORDER BY e.embedding <=> $1::vector ASC
+         LIMIT $2`,
+        [vectorJson, limit]
+      );
+
+      if (result.rows.length === 0) return [];
+
+      // 3. 过滤低相关性（cosine_sim < 0.55 视为噪声）
+      const MIN_SIM = 0.55;
+      const filtered = result.rows.filter(r => parseFloat(r.cosine_sim) >= MIN_SIM);
+
+      return filtered.map(r => ({
+        id: r.node_id,
+        type: 'graphify',
+        subtype: 'code',
+        name: r.node_name,
+        codeType: r.node_type,
+        file: r.file_path || null,
+        fileName: r.file_path ? r.file_path.split('/').pop() : null,
+        tags: r.tags || null,
+        relations: [],
+        confidence: parseFloat(r.cosine_sim),
+        source: 'graphify',
+        searchMode: 'vector',
+        // C2 得分：向量相似度 * 权重
+        score: route.weight.code * parseFloat(r.cosine_sim)
+      }));
+    } catch (err) {
+      // 向量查询失败不影响全文索引结果
+      console.warn('[query] 向量查询失败:', err.message.substring(0, 80));
+      return [];
+    }
+  }
+
+  /**
+   * _mergeGraphifyResults: 合并全文索引 + 向量结果
+   * 策略：
+   *   1. node_id 去重（全文 + 向量各命中同一节点时取较高分）
+   *   2. 向量结果得分 * VECTOR_WEIGHT，全文得分 * FULLTEXT_WEIGHT
+   *   3. 最终按合并得分降序
+   */
+  _mergeGraphifyResults(fulltextResults, vectorResults, route) {
+    const FULLTEXT_WEIGHT = 0.6;  // 全文索引权重
+    const VECTOR_WEIGHT   = 0.4;  // 向量权重（语义补充）
+
+    const map = new Map();
+
+    // 全文结果入 map
+    for (const item of fulltextResults) {
+      const key = item.id || item.name;
+      map.set(key, { ...item, _ftScore: item.score, _vecScore: 0, _sources: ['fulltext'] });
+    }
+
+    // 向量结果合并
+    for (const item of vectorResults) {
+      const key = item.id || item.name;
+      if (map.has(key)) {
+        // 同一节点：两路得分加权融合
+        const existing = map.get(key);
+        existing._vecScore = item.score;
+        existing._sources.push('vector');
+        existing.score = existing._ftScore * FULLTEXT_WEIGHT + item.score * VECTOR_WEIGHT;
+        existing.confidence = Math.max(existing.confidence, item.confidence);
+        existing.searchMode = 'hybrid';
+      } else {
+        // 仅向量命中（全文未命中的语义结果）
+        map.set(key, {
+          ...item,
+          _ftScore: 0,
+          _vecScore: item.score,
+          _sources: ['vector'],
+          score: item.score * VECTOR_WEIGHT
+        });
+      }
+    }
+
+    return [...map.values()].sort((a, b) => (b.score || 0) - (a.score || 0));
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
 
   async queryGraphify(userQuery, route) {
     if (!this.neo4jDriver) return [];
@@ -392,7 +508,8 @@ class QueryLayer {
     if (item.source === 'graphify') {
       const file = item.file ? ' (' + item.file.split('/').pop() + ')' : '';
       const aligned = item.alignedMemories ? ' → 📎对齐 ' + item.alignedMemories.length + ' 条记忆' : '';
-      return '[' + (item.codeType || 'code') + '] ' + item.name + file + aligned;
+      const mode = item.searchMode === 'vector' ? '🔍' : item.searchMode === 'hybrid' ? '🔮' : '';
+      return mode + '[' + (item.codeType || 'code') + '] ' + item.name + file + aligned;
     }
     if (item.subtype === 'summary') {
       return '[' + (item.summaryType || 'summary') + '] ' + item.content.substring(0, 120) + (item.content.length > 120 ? '...' : '');

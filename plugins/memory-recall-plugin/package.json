@@ -1,0 +1,11 @@
+{
+  "name": "memory-recall-plugin",
+  "version": "1.0.0",
+  "description": "Memory recall plugin for OpenClaw - injects recalled memories into agent prompts via before_prompt_build hook",
+  "type": "commonjs",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": ["./index.js"]
+  },
+  "dependencies": {}
+}

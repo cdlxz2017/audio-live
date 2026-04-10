@@ -1,0 +1,19 @@
+{
+  "apps": [
+    {
+      "name": "graphify-watcher",
+      "script": "watch-files.js",
+      "cwd": "/home/ai/.openclaw/workspace/custom-skills/graphify-manager",
+      "instances": 1,
+      "autorestart": true,
+      "watch": false,
+      "max_memory_restart": "200M",
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "exp_backoff_restart_delay": 100,
+      "max_restarts": 10,
+      "min_uptime": "10s"
+    }
+  ]
+}

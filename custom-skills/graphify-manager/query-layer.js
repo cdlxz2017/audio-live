@@ -328,10 +328,30 @@ class QueryLayer {
   }
 
   mergeResults(graphifyResults, memoryResults, route) {
+    // 节点类型权重（改动三：Graphify 查询层节点类型加分）
+    const NODE_TYPE_BOOST = {
+      'skill': 0.15,
+      'sop': 0.15,
+      'agent': 0.15,
+      'project_code': 0.10,
+      'tech_doc': 0.10,
+      'memory': 0.08,
+      'code': 0.05,
+      'package_json': -0.10,
+      'config_json': -0.05,
+      'messages_json': -0.15,  // Chrome插件多语言文件
+      'lock': -0.15,          // package-lock.json
+    };
     const all = [
       ...graphifyResults.map(r => ({ ...r, _source: 'graphify' })),
       ...memoryResults.map(r => ({ ...r, _source: 'memory' }))
     ];
+    // 应用节点类型权重
+    for (const item of all) {
+      const itemType = item.codeType || item.type || '';
+      const boost = NODE_TYPE_BOOST[itemType] || 0;
+      item.score = (item.score || 0) + boost;
+    }
     all.sort((a, b) => (b.score || 0) - (a.score || 0));
     return all.slice(0, this.config.maxResults);
   }

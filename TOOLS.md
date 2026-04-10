@@ -99,6 +99,21 @@ node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
 
 **GPU**: AMD Radeon 8060S (Ryzen AI MAX+ 395 集成) | VRAM: 16 GB
 
+## 运维检查脚本 (2026-04-10)
+
+### 安全系统检查
+```bash
+bash /home/ai/.openclaw/workspace/scripts/security-check.sh
+```
+> 用户说"检查安全"时调用此脚本
+> 检查 UFW 防火墙 + OSSEC HIDS + Active Response + fail2ban
+
+### 记忆系统检查
+```bash
+node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
+```
+> 用户说"检查记忆系统"时调用此脚本
+
 ## 记忆召回系统 (2026-04-10)
 
 - 文档: `memory-system/docs/RECALL-DESIGN.md`

@@ -210,12 +210,32 @@ module.exports = {
           return;
         }
 
-        // 构建 query（最后 4 条用户消息）
-        const recentUserMessages = userMessages.slice(-4);
+        // 构建 query（最后 4 条用户消息，过滤 heartbeat / system 噪音）
+        const NOISE_PATTERNS = [
+          /^Read HEARTBEAT\.md/i,
+          /^\s*\/new\s*$/,
+          /^\s*\/reset\s*$/,
+          /^HEARTBEAT_OK$/,
+        ];
+        const meaningfulUserMessages = userMessages.filter(m => {
+          const c = typeof m.content === 'string' ? m.content.trim() : '';
+          return c.length > 0 && !NOISE_PATTERNS.some(re => re.test(c));
+        });
+        const recentUserMessages = meaningfulUserMessages.slice(-4);
         const query = recentUserMessages
           .map(m => typeof m.content === 'string' ? m.content : '')
           .join(' | ')
-          .substring(0, 500);
+          .substring(0, 500)
+          .trim();
+
+        // query 为空 → 跳过语义召回，直接返回已加载的上下文（避免空 query 触发 DEFAULT intent 召回 tech docs）
+        if (!query) {
+          logger.info(`[memory-recall] Skip recall: empty query after noise filter, returning preloaded context only`);
+          if (contextParts.length > 0) {
+            return { prependContext: contextParts.join('\n\n') };
+          }
+          return;
+        }
 
         // 话题切换检测
         let topicShifted = false;

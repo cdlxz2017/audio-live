@@ -351,6 +351,93 @@ class QueryLayer {
     }
   }
 
+  /**
+   * _buildWordOrQuery: 将用户输入拆词，生成 OR 查询条件
+   * C4 修复: 多词 AND 查询（如 "openclaw gateway config"）导致 0 命中，
+   *         改为逐词 OR 以提升召回率。
+   * C4 追加: CJK 检测——中文无空格时按字符拆分，防止整句作为 ILIKE 短语导致 0 命中。
+   * @param {string} q - 原始查询
+   * @param {string} textExpr - to_tsvector 表达式
+   * @param {string[]} likeCols - 需要 ILIKE 的列名数组
+   * @param {number} startIdx - 参数起始下标（1-based）
+   * @returns {{ cond: string, params: any[], rankTsqueryIdx: number }}
+   */
+  _buildWordOrQuery(q, textExpr, likeCols, startIdx) {
+    const words = q.replace(/["'\\/]/g, ' ').split(/\s+/).filter(w => w.length >= 2);
+    // CJK 保护：中文无空格时，websearch_to_tsquery 将整句视为单 token，无法匹配中文 tsvector。
+    // 策略：跳过 tsquery，提取 2-4 字 sub-phrase 做 ILIKE，显著提升召回。
+    const hasNoSpaces = !/\s/.test(q.trim());
+    const hasCJK = /[\u4e00-\u9fff\u3040-\u30ff]/.test(q.trim());
+    const useCharSplit = hasNoSpaces && hasCJK;
+
+    let safeWords = words.length > 0 ? words : [q.trim()];
+
+    // 提取 CJK 2-4 字 sub-phrase 用于 ILIKE（避免整句 ILIKE 匹配失败）
+    const cjkSubPhrases = [];
+    if (useCharSplit) {
+      const t = q.trim();
+      // 2-char and 3-char sliding windows
+      for (let i = 0; i < t.length - 1; i++) {
+        const c = t[i];
+        if (/[\u4e00-\u9fff\u3040-\u30ff\w]/.test(c)) {
+          if (t[i + 1] && /[\u4e00-\u9fff\u3040-\u30ff\w]/.test(t[i + 1])) {
+            cjkSubPhrases.push(t.substring(i, i + 2));
+          }
+          if (t[i + 2] && /[\u4e00-\u9fff\u3040-\u30ff\w]/.test(t[i + 2])) {
+            cjkSubPhrases.push(t.substring(i, i + 3));
+          }
+        }
+      }
+      // 去重，限制最多 8 个（全部是 CJK 字构成的短语才保留）
+      const seen = new Set();
+      const unique = [];
+      for (const p of cjkSubPhrases) {
+        if (!seen.has(p)) {
+          // replaceAll 去掉所有 CJK 字符，剩下的是非 CJK 部分
+          const nonCJK = p.replaceAll(/[\u4e00-\u9fff\u3040-\u30ff]/g, '');
+          const cjkCount = (p.match(/[\u4e00-\u9fff\u3040-\u30ff]/g) || []).length;
+          // 如果去掉 CJK 后剩下的字符数 + CJK 字符数 = 总长度，则全部由 CJK 构成
+          if (p.length === nonCJK.length + cjkCount) {
+            seen.add(p);
+            unique.push(p);
+          }
+        }
+      }
+      cjkSubPhrases.length = 0;
+      cjkSubPhrases.push(...unique.slice(0, 8));
+    }
+
+    const params = [];
+    const tsConds = [];
+    const ilikeConds = [];
+    let idx = startIdx;
+
+    for (const word of safeWords) {
+      tsConds.push(`${textExpr} @@ websearch_to_tsquery('simple', $${idx})`);
+      params.push(word);
+      idx++;
+    }
+    for (const word of safeWords) {
+      const ph = '$' + idx;
+      ilikeConds.push(likeCols.map(c => `${c} ILIKE ${ph}`).join(' OR '));
+      params.push('%' + word + '%');
+      idx++;
+    }
+    // CJK: 使用 2-3 字 sub-phrase ILIKE（tsquery 在 CJK 场景无意义）
+    if (useCharSplit) {
+      for (const phrase of cjkSubPhrases) {
+        const ph = '$' + idx;
+        ilikeConds.push(likeCols.map(c => `${c} ILIKE ${ph}`).join(' OR '));
+        params.push('%' + phrase + '%');
+        idx++;
+      }
+    }
+
+    const allCond = [...tsConds, ...ilikeConds].join(' OR ');
+    // 复用第一个词的 tsquery 作为 ts_rank 的排序信号
+    return { cond: allCond, params, rankTsqueryIdx: startIdx };
+  }
+
   async queryMemory(userQuery, route) {
     if (!this.pgClient) return [];
     this.stats.memoryQueries++;
@@ -360,34 +447,39 @@ class QueryLayer {
 
     try {
       // 1. memories 表 entity/attribute/value 匹配
-      // C3 改动: plainto_tsquery -> websearch_to_tsquery，支持短语/AND/OR/NOT 查询
+      // C4 修复: 拆词 OR 替代 AND，确保多词查询能命中任意词
+      const memTextExpr = "to_tsvector('simple', coalesce(entity,'') || ' ' || coalesce(attribute,'') || ' ' || coalesce(value,''))";
+      const mem = this._buildWordOrQuery(q, memTextExpr, ['entity', 'attribute', 'value'], 1);
+      const memParams = [...mem.params, limit];
+      const memLimitIdx = mem.params.length + 1;
+
       const exactResult = await this.pgClient.query(
         'SELECT id, entity, attribute, value, memory_type, confidence, ' +
         '       created_at, updated_at, source ' +
         'FROM memories ' +
         'WHERE is_deleted = false ' +
-        '  AND (to_tsvector(\'simple\', coalesce(entity,\'\') || \' \' || coalesce(attribute,\'\') || \' \' || coalesce(value,\'\')) ' +
-        // '       @@ plainto_tsquery(\'simple\', $1) ' +  // 旧: 仅支持空格分隔词
-        '       @@ websearch_to_tsquery(\'simple\', $1) ' +  // 新: 支持短语"" AND OR NOT
-        '       OR entity ILIKE $2 OR attribute ILIKE $2 OR value ILIKE $2) ' +
-        'ORDER BY confidence DESC NULLS LAST, updated_at DESC LIMIT $3',
-        [q, '%' + q + '%', limit]
+        '  AND (' + mem.cond + ') ' +
+        'ORDER BY confidence DESC NULLS LAST, updated_at DESC LIMIT $' + memLimitIdx,
+        memParams
       );
 
       // 2. memory_summaries 全文检索
-      // C3 改动: plainto_tsquery -> websearch_to_tsquery，支持短语/AND/OR/NOT 查询
+      // C4 修复: 拆词 OR 替代 AND，确保多词查询能命中任意词
+      const sumTextExpr = "to_tsvector('simple', coalesce(summary,''))";
+      const sum = this._buildWordOrQuery(q, sumTextExpr, ['summary'], 1);
+      const sumParams = [...sum.params, limit3];
+      const sumLimitIdx = sum.params.length + 1;
+      const rankTsquery = '$' + sum.rankTsqueryIdx;
+
       const summaryResult = await this.pgClient.query(
         'SELECT id, summary, summary_type, time_range_start, time_range_end, ' +
         '       created_at, confidence, metadata ' +
         'FROM memory_summaries ' +
         'WHERE is_active = true ' +
-        '  AND (to_tsvector(\'simple\', coalesce(summary, \'\')) ' +
-        // '       @@ plainto_tsquery(\'simple\', $1) ' +  // 旧: 仅支持空格分隔词
-        '       @@ websearch_to_tsquery(\'simple\', $1) ' +  // 新: 支持短语"" AND OR NOT
-        '       OR summary ILIKE $2) ' +
-        'ORDER BY ts_rank(to_tsvector(\'simple\', coalesce(summary, \'\')), websearch_to_tsquery(\'simple\', $1)) DESC, ' +
-        '         created_at DESC LIMIT $3',
-        [q, '%' + q + '%', limit3]
+        '  AND (' + sum.cond + ') ' +
+        'ORDER BY ts_rank(' + sumTextExpr + ", websearch_to_tsquery('simple', " + rankTsquery + ")) DESC, " +
+        '         created_at DESC LIMIT $' + sumLimitIdx,
+        sumParams
       );
 
       const memories = exactResult.rows.map(r => ({

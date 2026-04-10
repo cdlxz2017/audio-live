@@ -1,7 +1,26 @@
 # 活跃任务
 
 > 基于 2026-04-05 日志提取，首次建立
-> 最后更新：2026-04-06
+> 最后更新：2026-04-10
+
+---
+
+## ✅ 已完成（本周）
+
+- [x] gemma4:26b 配置为 OpenClaw fallback 模型
+  ID: TASK-20260410-001
+  创建: 2026-04-10 07:57
+  更新: 2026-04-10 08:06
+  优先级: P1
+  状态: 已完成
+  memory_ref: "gemma4:26b fallback 2026-04-10"
+  上下文: /home/ai/.openclaw/openclaw.json
+  验证方式: openclaw config get agents.defaults.model.fallbacks
+  记忆上下文:
+    · 2026-04-10 07:57 | 用户要求将 gemma4:26b 作为 fallback
+    · 2026-04-10 07:58 | OLLAMA_KEEP_ALIVE=0 已写入 systemd 服务
+    · 2026-04-10 08:04 | fallback 链简化为: claude-sonnet → gemma4:26b → MiniMax-M2.7-highspeed
+    · 2026-04-10 08:06 | gemma4:26b 已常驻内存（38.7 GB），零 API 成本
 
 ---
 
@@ -84,21 +103,14 @@
 
 ---
 
-- [ ] 远程录音系统文档更新
+- [x] 远程录音系统文档更新 ✅
   ID: TASK-20260406-001
   创建: 2026-04-06 19:26
-  更新: 2026-04-06 19:26
+  更新: 2026-04-10 08:06
   优先级: P2
-  状态: 进行中
-  memory_ref: "SOP-AUDIO-STREAM.md 更新 2026-04-06"
-  上下文: /workspace/custom-skills/audio-stream/ + /workspace/custom-skills/camera-recorder/
+  状态: 已完成
   验证方式: cat SOP-AUDIO-STREAM.md | grep "DashScope"
-  超时: 5s
-  重试: 1次
-  依赖: []
   记忆上下文:
     · 2026-04-06 19:26 | SOP 已更新 ASR 流程（DashScope Fun-ASR 主用 + Whisper 备用）
     · 2026-04-06 19:26 | transcriber.py 已重写，双引擎回退
-    · 2026-04-06 19:26 | 音频流：stream-server.js → audio_post_process.py → transcriber.py
-    · 2026-04-06 19:26 | 文件存储：~/.openclaw/workspace/custom-skills/audio-stream/recordings/
-    · 2026-04-06 19:26 | PM2 管理：pm2 list audio-stream
+    · 2026-04-10 08:06 | 任务完成

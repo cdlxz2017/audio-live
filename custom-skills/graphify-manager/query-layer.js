@@ -9,6 +9,7 @@ const { promisify } = require('util');
 const { exec } = require('child_process');
 const execAsync = promisify(exec);
 const { embedOne } = require('./embedder');
+const crypto = require('crypto');
 
 class QueryLayer {
   constructor(config = {}) {
@@ -147,7 +148,11 @@ class QueryLayer {
 
     try {
       const route = this.routeQuery(userQuery, context);
-      const cacheKey = 'uq:' + userId + ':' + Buffer.from(userQuery).toString('base64').substring(0, 80);
+      // 缓存 key：使用 SHA-256 哈希（不截断，避免碰撞）+ 查询文本归一化（小写 + trim）
+      // 知识库查询是 session-agnostic 的，不含 userId 确保跨会话复用
+      const normalizedQuery = userQuery.toLowerCase().trim();
+      const queryHash = crypto.createHash('sha256').update(normalizedQuery).digest('hex').substring(0, 40);
+      const cacheKey = 'q:' + queryHash;
 
       const cached = this.cache.get(cacheKey);
       if (cached) {

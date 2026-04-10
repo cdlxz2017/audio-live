@@ -176,23 +176,40 @@ class QueryLayer {
     const session = this.neo4jDriver.session();
 
     try {
+      // 使用 Neo4j 全文索引查询，支持多词、自然语言、布尔查询
+      // 旧逻辑（CONTAINS 子串匹配，多词查询总是返回空）：
+      // const result = await session.run(
+      //   'MATCH (g:GraphifyCode) ' +
+      //   'WHERE toLower(g.name) CONTAINS toLower($query) ' +
+      //   '   OR toLower(g.type) CONTAINS toLower($query) ' +
+      //   '   OR (g.tags IS NOT NULL AND toLower(g.tags) CONTAINS toLower($query)) ' +
+      //   'OPTIONAL MATCH (g)-[:BELONGS_TO]->(f:GraphifyFile) ' +
+      //   'OPTIONAL MATCH (g)-[r]->(other:GraphifyCode) ' +
+      //   'WHERE g <> other ' +
+      //   'RETURN g, f, collect(DISTINCT {type: type(r), target: other.name, weight: r.weight}) as relations ' +
+      //   'ORDER BY g.name LIMIT $limit',
+      //   { query: userQuery.substring(0, 100), limit: neo4j.int(route.maxResults) }
+      // );
       const result = await session.run(
-        'MATCH (g:GraphifyCode) ' +
-        'WHERE toLower(g.name) CONTAINS toLower($query) ' +
-        '   OR toLower(g.type) CONTAINS toLower($query) ' +
-        '   OR (g.tags IS NOT NULL AND toLower(g.tags) CONTAINS toLower($query)) ' +
-        'OPTIONAL MATCH (g)-[:BELONGS_TO]->(f:GraphifyFile) ' +
-        'OPTIONAL MATCH (g)-[r]->(other:GraphifyCode) ' +
-        'WHERE g <> other ' +
-        'RETURN g, f, collect(DISTINCT {type: type(r), target: other.name, weight: r.weight}) as relations ' +
-        'ORDER BY g.name LIMIT $limit',
-        { query: userQuery.substring(0, 100), limit: neo4j.int(route.maxResults) }
+        `CALL db.index.fulltext.queryNodes(
+          'graphify_code_fulltext',
+          $query
+        ) YIELD node AS g, score
+        OPTIONAL MATCH (g)-[:BELONGS_TO]->(f:GraphifyFile)
+        OPTIONAL MATCH (g)-[r]->(other:GraphifyCode)
+        WHERE g <> other
+        RETURN g, f, score,
+          collect(DISTINCT {type: type(r), target: other.name, weight: r.weight}) as relations
+        ORDER BY score DESC
+        LIMIT $limit`,
+        { query: userQuery.substring(0, 200), limit: neo4j.int(route.maxResults) }
       );
 
       return result.records.map(record => {
         const g = record.get('g');
         const f = record.get('f');
         const relations = (record.get('relations') || []).filter(r => r.type);
+        const ftScore = record.get('score');
         return {
           id: g.properties.id || g.properties.name,
           type: 'graphify',
@@ -205,7 +222,7 @@ class QueryLayer {
           relations: relations.slice(0, 5),
           confidence: 0.85,
           source: 'graphify',
-          score: route.weight.code
+          score: route.weight.code + (ftScore ? ftScore * 0.3 : 0) // 全文索引得分叠加
         };
       });
     } finally {
@@ -222,28 +239,32 @@ class QueryLayer {
 
     try {
       // 1. memories 表 entity/attribute/value 匹配
+      // C3 改动: plainto_tsquery -> websearch_to_tsquery，支持短语/AND/OR/NOT 查询
       const exactResult = await this.pgClient.query(
         'SELECT id, entity, attribute, value, memory_type, confidence, ' +
         '       created_at, updated_at, source ' +
         'FROM memories ' +
         'WHERE is_deleted = false ' +
         '  AND (to_tsvector(\'simple\', coalesce(entity,\'\') || \' \' || coalesce(attribute,\'\') || \' \' || coalesce(value,\'\')) ' +
-        '       @@ plainto_tsquery(\'simple\', $1) ' +
+        // '       @@ plainto_tsquery(\'simple\', $1) ' +  // 旧: 仅支持空格分隔词
+        '       @@ websearch_to_tsquery(\'simple\', $1) ' +  // 新: 支持短语"" AND OR NOT
         '       OR entity ILIKE $2 OR attribute ILIKE $2 OR value ILIKE $2) ' +
         'ORDER BY confidence DESC NULLS LAST, updated_at DESC LIMIT $3',
         [q, '%' + q + '%', limit]
       );
 
       // 2. memory_summaries 全文检索
+      // C3 改动: plainto_tsquery -> websearch_to_tsquery，支持短语/AND/OR/NOT 查询
       const summaryResult = await this.pgClient.query(
         'SELECT id, summary, summary_type, time_range_start, time_range_end, ' +
         '       created_at, confidence, metadata ' +
         'FROM memory_summaries ' +
         'WHERE is_active = true ' +
         '  AND (to_tsvector(\'simple\', coalesce(summary, \'\')) ' +
-        '       @@ plainto_tsquery(\'simple\', $1) ' +
+        // '       @@ plainto_tsquery(\'simple\', $1) ' +  // 旧: 仅支持空格分隔词
+        '       @@ websearch_to_tsquery(\'simple\', $1) ' +  // 新: 支持短语"" AND OR NOT
         '       OR summary ILIKE $2) ' +
-        'ORDER BY ts_rank(to_tsvector(\'simple\', coalesce(summary, \'\')), plainto_tsquery(\'simple\', $1)) DESC, ' +
+        'ORDER BY ts_rank(to_tsvector(\'simple\', coalesce(summary, \'\')), websearch_to_tsquery(\'simple\', $1)) DESC, ' +
         '         created_at DESC LIMIT $3',
         [q, '%' + q + '%', limit3]
       );

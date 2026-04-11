@@ -1,0 +1,15 @@
+{
+  "id": "2026-04-11-1775939475364",
+  "concept": "什么是 RAG",
+  "query": "什么是 RAG",
+  "confidence": 0.4,
+  "researchResult": {
+    "summary": "研究失败: No LLM API key configured",
+    "sources": [],
+    "conclusion": "",
+    "needsApproval": true,
+    "confidenceBoost": 0
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-11T20:31:15.364Z"
+}

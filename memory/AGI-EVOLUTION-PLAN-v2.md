@@ -666,7 +666,7 @@ Neo4j Concept 节点创建
 personal_memories 增加 value_score + last_accessed
 召回 +1 分 / 30天未召回 -1 分 / 主动保存 +3 分
 < 2分 → 冷存储（personal_memories_legacy）
-> 90天冷存储 → 彻底删除（软删除）
+> 90天冷存储 → 永久保留，永不删除（软删除仅移入legacy表，不执行物理删除）
 新上下文触发 → 从冷存储拉回（重新激活）
 ```
 
@@ -686,7 +686,7 @@ personal_memories 增加 value_score + last_accessed
 新上下文召回时：
   相关冷存储记忆 → 重新激活（value_score +2）
     ↓
-90天冷存储 → 彻底删除（软删除）
+90天冷存储 → 永久保留，永不删除
 ```
 
 ### E.4 关键技术选型

@@ -1,0 +1,15 @@
+{
+  "id": "2026-04-11-1775940538363",
+  "concept": "量子计算机的原理",
+  "query": "量子计算机的原理",
+  "confidence": 0.25,
+  "researchResult": {
+    "summary": "研究失败: No LLM API key configured",
+    "sources": [],
+    "conclusion": "",
+    "needsApproval": true,
+    "confidenceBoost": 0
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-11T20:48:58.363Z"
+}

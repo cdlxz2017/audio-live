@@ -315,7 +315,42 @@ Neo4j PersonalMemory: 927节点, 318有content (2026-04-09 20:06)
 
 ---
 
-_最后更新：2026-04-06 01:20_
+## 🤖 Hermes Agent 研究与融合计划（2026-04-12）
+
+### 研究报告
+- **Hermes 深度分析**：`memory/HERMES-ANALYSIS-REPORT.md`
+- **融合可行性报告**：`memory/OPENCLAW-HERMES-FUSION-REPORT.md`
+- **Phase 0 状态**：`memory/HERMES-PHASE0-STATUS.md`
+
+### 核心结论
+- **推荐方案**：方案A（串行分工）+ C元素（Memory Provider Plugin）
+- **架构**：玄枢唯一入口 → Hermes 隐藏执行引擎 → OpenClaw 记忆基础设施
+- **6大危险全部有解**（人格冲突/记忆分裂/资源竞争/Skills冲突/安全冲突/体验碎片）
+- **资源评估**：充足（124GB RAM，新增~2-3GB）
+
+### Hermes 10项可借鉴设计（优先级）
+| 优先级 | 借鉴项 | 工作量 |
+|--------|--------|--------|
+| P0 | Memory 安全扫描（security-scanner.js）| 小 |
+| P0 | 危险命令审批（DANGEROUS_PATTERNS）| 小 |
+| P1 | FTS5 会话搜索（conversation_messages）| 小-中 |
+| P1 | Per-Platform Session Reset | 小 |
+| P2 | 渐进式 Skills 加载（L0/L1/L2）| 中 |
+| P3 | 双层上下文压缩（50%+85%）| 大 |
+
+### Phase 0 任务（当前优先）
+**目标**：验证 Hermes Memory Provider Plugin 能否接入 OpenClaw pgvector
+**待确认执行**：
+1. `git clone https://github.com/NousResearch/hermes-agent /home/ai/apps/hermes-agent`
+2. 分析 `memory_provider.py` ABC 接口
+3. 实现 OpenClaw provider 骨架
+4. 测试 Python → pgvector 连通性（目标 < 150ms）
+
+**注意**：每步需用户确认后执行（AGI其他模块暂缓）
+
+---
+
+_最后更新：2026-04-12 00:53_
 
 ---
 
@@ -419,4 +454,91 @@ python3 custom-skills/camera-recorder/scripts/camera.py open
 
 ### 服务端口
 3002:member / 3003:admin-frontend / 3004:auth / 3005:admin-frontend / 3007:karma / 3011:worldevent / 3013:admin-app
+
+---
+
+## ⚠️ 安全审计忽略项（2026-04-11）
+
+以下 OpenClaw 安全审计警告**已知悉且决定不管**：
+- `allowedOrigins: *` — 仅本地/内网使用，风险可控
+- `dangerouslyDisableDeviceAuth: true` — 仅内网/单设备，风险可控
+- `allowInsecureAuth: true` — 仅本地测试使用
+
+**不修复，不纠结，不重复报告。**
+
+---
+
+## 🤖 Hermes Agent 集成（2026-04-12）
+
+### 名字
+**别名：玄一（Xuan Yi）**
+主人叫"玄一"即指 Hermes，收到即执行。
+
+### 核心原则
+**玄枢是唯一人格，玄一是隐藏执行引擎。** 玄一按需调用，不常驻（省资源）。
+
+### 调用时机（每次对话都必须判断）
+
+**必须调用 Hermes：**
+- 代码分析：分析、设计、架构、重构、调试
+- 研究调研：研究、调研、比较、评估、比较方案
+- 代码生成：生成、编写、实现、开发（完整功能）
+- 复杂规划：规划、优化、多步骤任务
+- 深度研究：深入研究、调研报告、详细分析
+- 代码审查：code review、review code、explain why
+
+**OpenClaw 直接处理：**
+- 简单查询：什么、谁、什么时候、在哪里
+- 记忆存取：记住、查一下、告诉我、status
+- 日常对话：问候、闲聊、天气
+- 任务管理：增删改查任务、状态更新
+
+### 调用方式
+
+**路由模块**：`custom-skills/hermes-router/hermes-router.js`
+- `shouldInvokeHermes(message)` → 返回 `{invoke: bool, score: number}`
+- `invokeHermes(prompt)` → 执行 Hermes CLI，返回结果
+- `route(message)` → 判断 handler
+
+**直接调用**（主人明确要求）：
+```javascript
+const { invokeHermes } = require('custom-skills/hermes-router/hermes-router.js');
+const result = invokeHermes("分析这个问题");
+```
+
+**命令行**（测试用）：
+```bash
+cd /home/ai/apps/hermes-agent && source ~/.hermes/.env && python3 -m hermes_cli --print --prompt "你的问题"
+```
+
+### Hermes 工具（7个）
+
+| 工具 | 功能 | 来源 |
+|------|------|------|
+| recall_memories | 向量语义搜索 | OpenClaw pgvector |
+| search_memories | 全文检索 | PostgreSQL |
+| write_memory | 写入记忆 | PostgreSQL |
+| get_recall_stats | 记忆统计 | PostgreSQL |
+| graph_query | Graphify 代码图谱 | 79k 节点 |
+| neo4j_query | 关系推理查询 | Neo4j 180万节点 |
+| write_procedural_memory | 程序记忆 | PostgreSQL + Neo4j |
+
+### 安全网关
+DANGEROUS_PATTERNS 检测：rm -rf、DROP TABLE、shutdown 等危险命令拦截。
+
+### 项目路径
+- Hermes 源码：`/home/ai/apps/hermes-agent/`
+- Plugin：`/home/ai/apps/hermes-agent/plugins/memory/openclaw/`
+- Router：`/home/ai/.openclaw/workspace/custom-skills/hermes-router/`
+- PM2 Server：`/home/ai/projects/hermes-server/`（持久化实现中）
+
+### 状态
+- Phase 1 ✅：基础集成完成
+- Phase 2 ✅：Graphify + Neo4j + 安全网关
+- Phase 3 ✅：生产验证通过
+- 持久化 + 预热上下文：实现中
+
+---
+
+_最后更新：2026-04-12 02:25_
 

@@ -1,0 +1,72 @@
+#!/bin/bash
+# 4G 模块发送短信脚本
+# 用法: ./4g-sms <电话号码> <短信内容>
+# 示例: ./4g-sms 18982054696 "你好，这是测试"
+
+if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "用法: $0 <电话号码> <短信内容>"
+    echo "示例: $0 18982054696 \"你好，这是测试\""
+    exit 1
+fi
+
+PHONE="$1"
+MESSAGE="$2"
+PORT="/dev/ttyUSB2"
+
+sudo python3 -c "
+import serial, time, sys
+
+phone = '$PHONE'
+message = '''$MESSAGE'''
+port = '$PORT'
+
+try:
+    s = serial.Serial(port, 115200, timeout=10)
+    s.flushInput()
+    time.sleep(1)
+    
+    # 关闭 URC 干扰
+    s.write(b'AT+CREG=0\r\n')
+    time.sleep(1)
+    s.read(s.in_waiting)
+    s.write(b'AT+CEREG=0\r\n')
+    time.sleep(1)
+    s.read(s.in_waiting)
+    s.write(b'AT+CNMI=0,0,0,0,0\r\n')
+    time.sleep(1)
+    s.read(s.in_waiting)
+    time.sleep(3)
+    
+    # 步骤1: 设置文本模式
+    s.write(b'AT+CMGF=1\r\n')
+    time.sleep(2)
+    s.read(s.in_waiting)
+    
+    # 步骤2: 发送号码
+    print(f'正在发送短信到 {phone}...')
+    s.write(f'AT+CMGS=\"{phone}\"\r\n'.encode())
+    time.sleep(5)
+    
+    response = s.read(s.in_waiting)
+    
+    if b'>' in response:
+        # 步骤3: 发送内容（不加回车，直接发0x1A结束）
+        s.write(message.encode())
+        time.sleep(0.3)
+        s.write(bytes([0x1A]))  # Ctrl+Z 发送
+        time.sleep(10)
+        result = s.read(s.in_waiting).decode(errors='ignore')
+        print(result.strip())
+        if '+CMGS:' in result:
+            print('短信发送成功！')
+        else:
+            print('发送结果未知，请检查')
+    else:
+        print('未收到 > 提示符，短信发送失败')
+        print('响应:', response.decode(errors='ignore'))
+    
+    s.close()
+except Exception as e:
+    print(f'错误: {e}')
+    sys.exit(1)
+"

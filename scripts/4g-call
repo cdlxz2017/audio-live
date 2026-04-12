@@ -1,0 +1,91 @@
+#!/bin/bash
+# 4G 模块打电话脚本
+# 用法: 
+#   ./4g-call <电话号码>          # 等待用户按Enter挂断
+#   ./4g-call <电话号码> auto     # 20秒后自动挂断
+#   ./4g-call <电话号码> <秒数>   # 指定秒数后自动挂断
+# 示例: 
+#   ./4g-call 10086
+#   ./4g-call 10086 auto
+#   ./4g-call 10086 30
+
+if [ -z "$1" ]; then
+    echo "用法: $0 <电话号码> [auto|<秒数>]"
+    echo "示例: $0 10086       # 等待按Enter挂断"
+    echo "示例: $0 10086 auto  # 20秒后自动挂断"
+    echo "示例: $0 10086 30    # 30秒后自动挂断"
+    exit 1
+fi
+
+PHONE="$1"
+MODE="${2:-manual}"
+PORT="/dev/ttyUSB2"
+
+if [ "$MODE" = "auto" ]; then
+    TIMEOUT=20
+else
+    TIMEOUT="${2:-999999}"
+fi
+
+sudo python3 -c "
+import serial, time, sys, os, signal
+from threading import Timer
+
+phone = '$PHONE'
+timeout = $TIMEOUT
+done = False
+
+def hangup(s):
+    global done
+    if not done:
+        done = True
+        s.write(b'AT+CHUP\r\n')
+        time.sleep(2)
+        print('\n[通话已挂断]')
+        try:
+            print(s.read(s.in_waiting).decode().strip())
+        except:
+            pass
+
+signal.signal(signal.SIGALRM, lambda s,f: None)
+
+s = serial.Serial('$PORT', 115200, timeout=10)
+s.flushInput()
+time.sleep(1)
+
+# 关闭 URC 干扰
+s.write(b'AT+CREG=0\r\n')
+time.sleep(1)
+s.read(s.in_waiting)
+s.write(b'AT+CEREG=0\r\n')
+time.sleep(1)
+s.read(s.in_waiting)
+
+print(f'正在拨打 {phone}...')
+s.write(f'ATD{phone};\r\n'.encode())
+time.sleep(3)
+response = s.read(s.in_waiting).decode(errors='ignore')
+print(response.strip())
+
+if 'VOICE CALL: BEGIN' in response or '+COLP:' in response or 'OK' in response:
+    print(f'通话已接通！{\"将在 \"+str(timeout)+\" 秒后自动挂断\" if timeout < 999999 else \"按 Enter 挂断\"}')
+    
+    # 启动定时器自动挂断
+    if timeout < 999999:
+        timer = Timer(timeout, hangup, [s])
+        timer.start()
+    
+    try:
+        if timeout < 999999:
+            time.sleep(timeout + 1)
+        else:
+            input()  # 等待用户按 Enter
+        hangup(s)
+    except (EOFError, OSError):
+        # 非交互式环境，直接挂断
+        hangup(s)
+else:
+    print('呼叫未接通，请检查')
+
+s.close()
+"

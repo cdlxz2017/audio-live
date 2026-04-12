@@ -5,9 +5,10 @@
       "script": "watch-files.js",
       "cwd": "/home/ai/.openclaw/workspace/custom-skills/graphify-manager",
       "instances": 1,
+      "exec_mode": "fork",
       "autorestart": true,
       "watch": false,
-      "max_memory_restart": "200M",
+      "max_memory_restart": "512M",
       "env": {
         "NODE_ENV": "production"
       },

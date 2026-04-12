@@ -1,0 +1,70 @@
+#!/bin/bash
+# 4G 模块接听来电脚本
+# 用法: ./4g-answer
+# 有来电时自动接听，按任意键挂断
+
+sudo python3 -c "
+import serial, time, sys, select, re
+
+print('📡 监听来电中，按 Ctrl+C 退出')
+print('   有来电时自动接听，通话中按任意键挂断')
+print('')
+
+s = serial.Serial('/dev/ttyUSB2', 115200, timeout=0)
+s.flushInput()
+time.sleep(1)
+
+# 关闭 URC
+s.write(b'AT+CREG=0\r\n')
+time.sleep(0.5)
+s.read(s.in_waiting)
+s.write(b'AT+CEREG=0\r\n')
+time.sleep(0.5)
+s.read(s.in_waiting)
+
+# 开启来电显示
+s.write(b'AT+CLIP=1\r\n')
+time.sleep(0.5)
+s.read(s.in_waiting)
+
+print('等待来电...')
+
+while True:
+    if s.in_waiting > 0:
+        data = s.read(s.in_waiting).decode(errors='replace')
+        sys.stdout.write(data)
+        sys.stdout.flush()
+        
+        # 检测来电号码
+        if '+CLIP:' in data:
+            m = re.search(r'\+CLIP:\s*\"([^\"]+)\"', data)
+            if m:
+                caller = m.group(1)
+                print(f'\n📞 来电: {caller}，自动接听...')
+                s.write(b'ATA\r\n')
+                time.sleep(2)
+                resp = s.read(s.in_waiting).decode(errors='ignore')
+                if resp:
+                    print(resp.strip())
+                print('已接通！按任意键挂断...')
+        
+        # 检测通话结束
+        if 'NO CARRIER' in data or 'VOICE CALL: END' in data:
+            print('\n通话已结束')
+            break
+        
+        if 'RING' in data:
+            sys.stdout.write('\r🔔 来电响铃...')
+            sys.stdout.flush()
+    
+    # 检查键盘
+    if select.select([sys.stdin], [], [], 0.1)[0]:
+        s.write(b'AT+CHUP\r\n')
+        time.sleep(1)
+        print('\n已挂断')
+        break
+    
+    time.sleep(0.05)
+
+s.close()
+"

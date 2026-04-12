@@ -1,0 +1,24 @@
+apps:
+  - name: 4g-sms-listener
+    script: /home/ai/.openclaw/workspace/scripts/4g-sms-listener.py
+    interpreter: /usr/bin/python3
+    kill_signal: SIGINT
+    autorestart: true
+    watch: false
+    max_memory_restart: 200M
+    exp_backoff_restart_delay: 1000
+    max_restarts: 10
+    min_uptime: 10s
+    kill_timeout: 5000
+
+  - name: 4g-call-listener
+    script: /home/ai/.openclaw/workspace/scripts/4g-call-listener.py
+    interpreter: /usr/bin/python3
+    kill_signal: SIGINT
+    autorestart: true
+    watch: false
+    max_memory_restart: 200M
+    exp_backoff_restart_delay: 1000
+    max_restarts: 10
+    min_uptime: 10s
+    kill_timeout: 5000

@@ -36,3 +36,8 @@ sleep 1
 
 ip route flush cache
 echo "[gfwlist-route] 初始化完成"
+
+# 境外 DNS 强制走 ppp0（避免 GFW 污染 DNS 查询）
+ip route replace 8.8.8.8/32 dev ppp0
+ip route replace 8.8.4.4/32 dev ppp0
+ip route replace 1.1.1.1/32 dev ppp0

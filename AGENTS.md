@@ -38,6 +38,18 @@ All active tasks live in `memory/ACTIVE_TASKS.md`. Read `memory/TASK_SOP.md` for
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
 
+### Task Status Discipline (2026-04-12)
+
+**核心原则：做完即归档，未归档=未完成。**
+
+每次session结束前，必须检查所有任务状态：
+1. 完成任务（done）→ 立即执行 `task-crud.js done <id> --summary "..."`，不能只写日记
+2. 取消任务（cancel）→ 立即执行 `task-crud.js cancel <id> --reason "..."`
+3. 文字日记（memory/YYYY-MM-DD.md）是辅助记录，数据库状态才是真实状态
+4. 两者必须同步，不允许"日记写了done但数据库没更新"的情况
+
+**操作即记录**：执行完done/cancel命令后，同时更新当日日记文件，保持一致。
+
 ### 🧠 MEMORY.md - Your Long-Term Memory
 
 - **ONLY load in main session** (direct chats with your human)

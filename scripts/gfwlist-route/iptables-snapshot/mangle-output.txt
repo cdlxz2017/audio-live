@@ -1,0 +1,3 @@
+Chain OUTPUT (policy ACCEPT 635K packets, 338M bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1     106K   54M MARK       0    --  *      *       0.0.0.0/0            0.0.0.0/0            match-set gfwlist dst MARK set 0x1

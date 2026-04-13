@@ -1,0 +1,34 @@
+# 4G语音通讯系统 v2 配置文件
+# API Keys 放这里，不要硬编码
+
+database:
+  url: postgresql://openclaw_ai:zyxrcy910128@localhost:5432/openclaw_memory
+
+serial:
+  at_port: /dev/ttyUSB1
+  sms_port: /dev/ttyUSB2
+  baud: 115200
+
+audio:
+  record_device: plughw:1,0
+  output_device: plughw:0,3
+  sample_rate: 16000
+  gain: 0.3
+  channels: 1
+
+whisper:
+  model: large-v3-turbo
+
+llm:
+  provider: minimax
+  api_key: YOUR_MINIMAX_API_KEY
+  model: MiniMax-M2.7
+  base_url: https://api.minimax.chat/v1
+
+tts:
+  provider: edge
+  voice: zh-CN-YunxiNeural
+
+wechat:
+  target: o9cq809401Af26gJM8UaJGc6KjBo@im.wechat
+  channel: openclaw-weixin

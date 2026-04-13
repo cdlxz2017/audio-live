@@ -1,0 +1,32 @@
+apps:
+  - name: voice-listener
+    script: src/voice_listener.py
+    interpreter: python3
+    cwd: /home/ai/.openclaw/workspace/voice-system/v2
+    instances: 1
+    autorestart: true
+    watch: false
+    exp_backoff_restart_delay: 1000
+    max_memory_restart: 512M
+    env:
+      PYTHONPATH: /home/ai/.openclaw/workspace/voice-system/v2
+    out_file: /home/ai/.openclaw/workspace/logs/voice-v2/pm2-listener.log
+    error_file: /home/ai/.openclaw/workspace/logs/voice-v2/pm2-listener-error.log
+    log_date_format: 'YYYY-MM-DD HH:mm:ss'
+    merge_logs: true
+
+  - name: voice-sms-handler
+    script: src/sms_handler.py
+    interpreter: python3
+    cwd: /home/ai/.openclaw/workspace/voice-system/v2
+    instances: 1
+    autorestart: true
+    watch: false
+    exp_backoff_restart_delay: 1000
+    max_memory_restart: 256M
+    env:
+      PYTHONPATH: /home/ai/.openclaw/workspace/voice-system/v2
+    out_file: /home/ai/.openclaw/workspace/logs/voice-v2/pm2-sms.log
+    error_file: /home/ai/.openclaw/workspace/logs/voice-v2/pm2-sms-error.log
+    log_date_format: 'YYYY-MM-DD HH:mm:ss'
+    merge_logs: true

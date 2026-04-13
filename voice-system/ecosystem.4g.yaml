@@ -1,0 +1,11 @@
+apps:
+  - name: 4g-listener
+    script: /home/ai/.openclaw/workspace/voice-system/start-4g.sh
+    interpreter: bash
+    instances: 1
+    autorestart: true
+    max_restarts: 10
+    min_uptime: 5s
+    kill_timeout: 5000
+    exp_backoff_restart_delay: 1000
+    watch: false

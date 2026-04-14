@@ -183,6 +183,44 @@
 - **Goal追踪**：Neo4j Goal honeypot-defense-2026 ✅ 100% 完成
 - **状态**：✅ 全部部署完成并验证通过
 
+### 天雷系统（TianLei Penetration Testing System）⚡
+- **用途**：专业级全流程渗透测试自动化框架，从侦察、扫描、渗透到后渗透和报告生成
+- **触发词**：天雷、渗透测试、天雷系统、pentest
+- **路径**：`/home/ai/.openclaw/workspace/deliverables/tianlei/`
+- **一键执行**：
+  ```bash
+  cd /home/ai/.openclaw/workspace/deliverables/tianlei
+  ./run-all.sh                    # 交互式一键全流程
+  ```
+- **分步执行**：
+  ```bash
+  ./01-recon/recon.sh             # 阶段1：侦察（被动+主动）
+  ./02-scan/vuln-scan.sh          # 阶段2：漏洞扫描（Nmap+Nuclei+CVE）
+  ./02-scan/web-scan.sh           # Web应用扫描
+  ./02-scan/api-scan.sh           # API接口扫描
+  ./02-scan/db-scan.sh            # 数据库扫描
+  ./03-exploit/exploit.sh         # 阶段3：渗透利用
+  ./03-exploit/waf-bypass.sh      # WAF绕过
+  ./03-exploit/web-exploit.py     # Web漏洞利用（SQL注入等）
+  ./03-exploit/host-exploit.sh    # 主机渗透
+  ./04-post-exploit/post-exploit.sh  # 阶段4：后渗透
+  ./04-post-exploit/privesc-linux.sh  # Linux提权
+  ./04-post-exploit/privesc-windows.sh # Windows提权
+  ./04-post-exploit/lateral.sh    # 横向移动
+  ./04-post-exploit/cleanup.sh    # 痕迹清理
+  python3 ./05-report/report-gen.py  # 阶段5：生成HTML/Markdown报告
+  ```
+- **配置**：编辑 `config/target.conf` 设置目标网段/域名/IP和授权文件路径
+- **输出**：`results/<project>/<date>/` 下按阶段分类，含漏洞JSON和HTML报告
+- **特性**：
+  - 授权文件验证（执行前强制检查）
+  - 工具缺失自动提示并跳过
+  - 彩色日志 + 文件日志双输出
+  - 自动HTML报告（含CVSS评分、修复建议、统计图表）
+  - 痕迹清理（远程主机+本地）
+- **脚本数**：23个完整可执行脚本，约5,800行代码
+- **状态**：✅ 已部署
+
 ### 安全检查脚本
 ```bash
 bash /home/ai/.openclaw/workspace/scripts/security-check.sh
@@ -230,6 +268,29 @@ bash /home/ai/.openclaw/workspace/scripts/security-check.sh
 ### 系统修改 SOP
 - **触发词**：修改系统、更改配置
 - **路径**：`SOP-SYSTEM-MODIFICATION.md`
+
+---
+
+## AI 创作
+
+### ComfyUI（图像生成）
+- **触发词**：ComfyUI、图像生成、AI画图、画图
+- **WebUI**：http://192.168.31.200:8188
+- **版本**：v0.19.0
+- **PyTorch**：2.6.0+rocm6.2.4
+- **GPU**：AMD Radeon 8060S (gfx1151)，64GB VRAM
+- **节点数**：674 个
+- **PM2 管理**：
+  ```bash
+  pm2 start comfyui    # 启动
+  pm2 stop comfyui     # 停止
+  pm2 logs comfyui     # 查看日志
+  pm2 restart comfyui  # 重启
+  ```
+- **路径**：`/home/ai/ComfyUI`
+- **模型路径**：`/home/ai/ComfyUI/models`
+- **兼容模式**：HSA_OVERRIDE_GFX_VERSION=11.0.0（RDNA4 → RDNA3 内核）
+- **状态**：✅ 运行中（PM2 #26）
 
 ---
 
@@ -282,8 +343,10 @@ cd ~/.config && git add . && git commit -m "描述"
 | fail2ban | ✅ 运行中 |
 | UFW 防火墙 | ✅ 已激活 |
 | 蜜罐防御系统 | ✅ 全部生效 |
+| 天雷系统 | ✅ 已部署 |
+| ComfyUI | ✅ 运行中（PM2 #26）|
 | SOP文档 | ✅ 6份可用 |
 
 ---
 
-_最后更新：2026-04-14_
+_最后更新：2026-04-15_

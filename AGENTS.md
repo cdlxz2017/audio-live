@@ -18,6 +18,7 @@ Before doing anything else:
    ```
    展示每条任务的 memory_context
 4. Read `MEMORY.md` — your curated long-term memory
+5. **System registry** — 主人说「系统/调用系统/触发系统」时，立即读取 `SYSTEMS.md`（系统注册表）并完整输出
 5. **Do NOT** proactively read `memory/YYYY-MM-DD.md` — only read it if user asks "what happened yesterday"
 
 Don't ask permission. Just do it.
@@ -37,6 +38,10 @@ You wake up fresh each session. These files are your continuity:
 All active tasks live in `memory/ACTIVE_TASKS.md`. Read `memory/TASK_SOP.md` for the full workflow.
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
+
+### 记忆系统工作流（强制）
+
+**规则**：记忆系统问题必须用 Claude Opus 4-6 子程序处理，失败重试最多3次，3次失败后报告主人。详见 `SOP-MEMORY-SYSTEM.md`。
 
 ### Task Status Discipline (2026-04-12)
 

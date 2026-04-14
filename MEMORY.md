@@ -4,6 +4,12 @@
 
 ---
 
+## 🏷️ 系统触发词
+
+**触发条件**：主人说「系统」「调用系统」「触发系统」「所有系统」「系统清单」时，立即读取 `workspace/SYSTEMS.md` 并完整输出。
+
+---
+
 ## 📧 邮件收发 Skill
 
 | Skill | 路径 | 说明 |
@@ -348,9 +354,22 @@ Neo4j PersonalMemory: 927节点, 318有content (2026-04-09 20:06)
 
 **注意**：每步需用户确认后执行（AGI其他模块暂缓）
 
+### 目标追踪系统（Goal Tracker / 模块C）
+- **功能**：Neo4j Goal/SubGoal/Milestone 节点追踪长期任务进度，4h cron 检查 + 漂移检测
+- **当前状态**：已部署，测试目标已清理，漂移检测正常运行
+- **子模块数量**：Goal×1 + SubGoal×8 + Milestone×16
+- **主人需要时**：告诉我项目/任务名称，我自动创建 Goal + SubGoal + Milestone，后续自动追踪进度和漂移
+
+### 推理模式管理器（模块F）激活方法
+- 脚本：`memory-system/scripts/reasoning-pattern-manager.js`
+- 激活方式：在 recall hook 或 agent 入口加入 `isReasoningTask()` 前置判断 → `findApplicablePatterns()` → `recordAttempt()`
+- **当前状态**：已初始化（Neo4j schema + 5个内置模式），主对话流程未集成
+- **激活条件**：主人明确授权后才能改主对话流程（属记忆系统禁区边缘）
+- **快速验证**：`node memory-system/scripts/reasoning-pattern-manager.js init`
+
 ---
 
-_最后更新：2026-04-12 00:53_
+_最后更新：2026-04-14 06:13_
 
 ---
 
@@ -426,7 +445,16 @@ python3 custom-skills/camera-recorder/scripts/camera.py open
 - 数据库：openclaw_memory.video_records
 
 ### SOP 文档
-`~/workspace/SOP-VIDEO-RECORDING.md`
+| SOP | 路径 | 用途 |
+|-----|------|------|
+| 记忆系统工作流 | `SOP-MEMORY-SYSTEM.md` | **强制**：记忆系统问题必须用 Claude Opus 4-6 子程序，失败重试3次 |
+| 邮件收发 | `SOP-EMAIL.md` | QQ邮箱标准收发流程 |
+| 视频录制 | `SOP-VIDEO-RECORDING.md` | OBSBOT 摄像头录制系统 |
+
+**记忆系统问题处理规则**：
+- 任何 memory-system 相关问题 → 使用 `4sapi/claude-opus-4-6` 子程序处理
+- 子程序失败 → 立即重试，循环最多3次
+- 3次均失败 → 停止行动，向主人报告
 
 ---
 

@@ -221,6 +221,41 @@
 - **脚本数**：23个完整可执行脚本，约5,800行代码
 - **状态**：✅ 已部署
 
+### ClamAV（恶意文件扫描引擎）
+- **用途**：扫描系统中的病毒、木马、恶意文件，填补OSSEC HIDS不具备的文件级杀毒能力
+- **版本**：1.4.3（Ubuntu 24.04 apt源）
+- **触发词**：ClamAV、病毒扫描、恶意文件
+- **扫描命令**：
+  ```bash
+  # 手动扫描
+  /usr/bin/clamscan --recursive --infected --move=/var/quarantine/ \
+    --exclude-dir=/home/ai/.openclaw/ \
+    --exclude-dir=/home/ai/projects/ \
+    --exclude-dir=/home/ai/apps/ \
+    /tmp /var/tmp /home/ai
+  ```
+- **定时任务**：每日凌晨5:00（ai用户，nice -n 19，低优先级）
+- **隔离目录**：`/var/quarantine/`（700权限，仅ai可访问）
+- **日志路径**：`/home/ai/.openclaw/workspace/logs/clamav-scan.log`
+- **重要**：发现威胁时仅**隔离**而非自动删除，确保可恢复
+- **与OSSEC联动**：可疑文件由OSSEC检测后触发ClamAV扫描
+- **状态**：✅ 已部署
+
+### Lynis（系统安全审计）
+- **用途**：自动化安全审计、合规检测（ISO27001/PCI DSS/HIPAA）、漏洞检测
+- **版本**：3.0.9（apt源）
+- **触发词**：Lynis、安全审计、合规检测
+- **审计命令**：
+  ```bash
+  /usr/sbin/lynis audit system  # 完整审计
+  /usr/sbin/lynis show report    # 查看上次报告
+  ```
+- **定时任务**：每周一凌晨2:00（root用户，只读扫描）
+- **日志路径**：`/var/log/lynis-cron.log`
+- **特点**：完全只读，不修改系统文件，与OSSEC无冲突
+- **报告输出**：`/var/log/lynis-report.dat`（机器可读）
+- **状态**：✅ 已部署
+
 ### 安全检查脚本
 ```bash
 bash /home/ai/.openclaw/workspace/scripts/security-check.sh
@@ -278,29 +313,6 @@ bash /home/ai/.openclaw/workspace/scripts/security-check.sh
 
 ---
 
-## AI 创作
-
-### ComfyUI（图像生成）
-- **触发词**：ComfyUI、图像生成、AI画图、画图
-- **WebUI**：http://192.168.31.200:8188
-- **版本**：v0.19.0
-- **PyTorch**：2.6.0+rocm6.2.4
-- **GPU**：AMD Radeon 8060S (gfx1151)，64GB VRAM
-- **节点数**：674 个
-- **PM2 管理**：
-  ```bash
-  pm2 start comfyui    # 启动
-  pm2 stop comfyui     # 停止
-  pm2 logs comfyui     # 查看日志
-  pm2 restart comfyui  # 重启
-  ```
-- **路径**：`/home/ai/ComfyUI`
-- **模型路径**：`/home/ai/ComfyUI/models`
-- **兼容模式**：HSA_OVERRIDE_GFX_VERSION=11.0.0（RDNA4 → RDNA3 内核）
-- **状态**：✅ 运行中（PM2 #26）
-
----
-
 ## 工具脚本
 
 ### 系统安全检查
@@ -351,9 +363,10 @@ cd ~/.config && git add . && git commit -m "描述"
 | UFW 防火墙 | ✅ 已激活 |
 | 蜜罐防御系统 | ✅ 全部生效 |
 | 天雷系统 | ✅ 已部署 |
-| ComfyUI | ✅ 运行中（PM2 #26）|
-| SOP文档 | ✅ 7份可用 |
+| ClamAV | ✅ 已部署（每日凌晨5点）|
+| Lynis | ✅ 已部署（每周一凌晨2点）|
+| SOP文档 | ✅ 6份可用 |
 
 ---
 
-_最后更新：2026-04-15_
+_最后更新：2026-04-16_

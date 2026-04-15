@@ -303,6 +303,30 @@
 - **报告输出**：`/var/log/lynis-report.dat`（机器可读）
 - **状态**：✅ 已部署
 
+### 隔离区分析系统（Quarantine Analyzer）
+- **用途**：ClamAV隔离文件后，自动分析数据链归属、影响范围、威胁等级，发送邮件报告供主人决策
+- **触发词**：隔离区、quarantine、分析文件
+- **分析维度**：SHA256哈希、文件类型、熵值分析、字符串提取、数据链归属、进程关联、包管理器归属
+- **工作流程**：
+  ```
+  ClamAV扫描发现威胁 → 隔离到/var/quarantine/
+      ↓
+  自动分析 → 生成报告 → 发送邮件至cdlxz2017@qq.com
+      ↓
+  3小时无操作 → 提醒邮件
+      ↓
+  7天无操作 → 自动归档（/var/quarantine/archive/，非删除）
+  ```
+- **操作命令**（邮件回复）：
+  - `删除 [SHA256前8位]` → 永久删除
+  - `保留 [SHA256前8位]` → 移出隔离区
+  - `分析 [SHA256前8位]` → 深度逆向分析
+- **安全特性**：三层验证（发件人+命令格式+文件存在性），静态分析优先
+- **分析脚本**：`/home/ai/.openclaw/workspace/scripts/quarantine-analyzer.js`
+- **守护脚本**：`/home/ai/.openclaw/workspace/scripts/quarantine-watcher.js`
+- **日志**：`/home/ai/.openclaw/workspace/logs/quarantine-analyzer.log`
+- **状态**：✅ 已部署
+
 ### 安全检查脚本
 ```bash
 bash /home/ai/.openclaw/workspace/scripts/security-check.sh
@@ -412,6 +436,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 天雷系统 | ✅ 已部署 |
 | ClamAV | ✅ 已部署（每日凌晨5点）|
 | Lynis | ✅ 已部署（每周一凌晨2点）|
+| 隔离区分析 | ✅ 已部署（每小时监控）|
 | SOP文档 | ✅ 6份可用 |
 
 ---

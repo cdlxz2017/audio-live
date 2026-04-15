@@ -41,15 +41,53 @@
 ## 记忆与知识
 
 ### 记忆系统
-- **触发词**：记忆系统、检查记忆、health check
+- **触发词**：记忆系统、检查记忆、health check、数据链路
 - **使用**：
   ```bash
   node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
   node /home/ai/.openclaw/workspace/memory-system/scripts/system-deep-inspector.js
   ```
-- **包含**：session-extractor、graph-linker、summary-extractor、SelfHealer、AutoMonitor
+- **包含**：session-extractor、graph-linker、summary-extractor、outbox-writer、SelfHealer、AutoMonitor
 - **端口**：18789（Gateway）/ 31234（Graphify Query）
-- **状态**：✅ 运行中（6/6进程）
+- **状态**：✅ 运行中
+
+#### 记忆系统 — 数据链路一览
+
+| 链路 | 路径 | 速率 | 状态 |
+|------|------|------|------|
+| **L1** Session JSONL → conversation_messages | session-extractor（PM2）轮询JSONL文件 | ~20条/小时 | ✅ 畅通 |
+| **L2** conversation_messages → memory_summaries | summary-extractor（PM2）30秒轮询，4条消息触发摘要 | ~1-2条/小时 | ✅ 畅通 |
+| **L3** memory_summaries → summary_message_links | 迁移脚本一次性写入（604条历史关系） | 静止 | ✅ 完成 |
+| **L4** summary-extractor → memory_outbox | Outbox Pattern：事务双写（memory_summaries + memory_outbox）| 待新摘要触发 | ✅ 已改造 |
+| **L5** memory_outbox → personal_memories | outbox-writer（PM2）每10秒消费pending事件 | 待触发 | ✅ 已部署 |
+| **L6** memory_outbox → Neo4j PersonalMemory | outbox-writer 异步写入 Neo4j | 待触发 | ✅ 已部署 |
+| **L7** session-extractor → personal_memories | 直接写入（主写入路径，非VALUABLE_TYPES摘要） | ~450-500条/小时 | ✅ 主要来源 |
+| **L8** Redis Stream → graph-linker → Neo4j | graph-linker（PM2）消费graph:sync:events建立ALIGNED_TO关系 | 修复中 | ⚠️ 修复中 |
+| **L9** 用户消息 → recall hook → session-recall | recall hook调用session-recall.js，pgvector召回 | P50:79ms P99:419ms | ✅ 正常 |
+| **L10** get-summary-sources追溯接口 | get-summary-sources.js双向追溯（summary↔message）| 查询级 | ✅ 可用 |
+
+#### 关键表数据量
+
+| 表 | 数量 | 说明 |
+|----|------|------|
+| conversation_messages | ~4600 | 原始对话存档 |
+| memory_summaries | ~724 | 摘要（1-2条/小时）|
+| personal_memories | ~18500 | 主记忆（450-500条/小时主要来源）|
+| summary_message_links | 604 | 历史迁移的junction table |
+| memory_outbox | 0 | 待新摘要产生后有数据 |
+| recall_logs | ~330 | 召回历史记录 |
+| entity_registry | 0 | Phase 3 relation-discoverer填充 |
+| memory_relations | 0 | 已废弃（迁移至Neo4j）|
+
+#### PM2 进程清单
+
+| 进程 | 端口 | 职责 | 状态 |
+|------|------|------|------|
+| session-extractor | — | JSONL→conversation_messages | ✅ online |
+| summary-extractor | — | conversation_messages→memory_summaries+outbox | ✅ online |
+| outbox-writer | — | memory_outbox→personal_memories+Neo4j | ✅ online |
+| graph-linker | — | Redis Stream→Neo4j（ALIGNED_TO关系）| ⚠️ 修复中 |
+| session-recall | — | 向量召回API（31234端口）| ✅ online |
 
 #### graph-linker 状态监控
 - **触发词**：graph-linker 状态、graph-linker 积压、graph-linker 速度、graph-linker 消费
@@ -58,7 +96,7 @@
   node /home/ai/.openclaw/workspace/custom-skills/graph-linker-monitor/check-graph-linker.js
   ```
 - **输出**：Stream 概况 / Consumer 状态 / 积压分析 / 速率分析 / 预估时间
-- **状态**：✅ 运行中
+- **状态**：⚠️ 修复中（xlen方法调用错误）
 
 ---
 

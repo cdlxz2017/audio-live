@@ -51,6 +51,15 @@
 - **端口**：18789（Gateway）/ 31234（Graphify Query）
 - **状态**：✅ 运行中（6/6进程）
 
+#### graph-linker 状态监控
+- **触发词**：graph-linker 状态、graph-linker 积压、graph-linker 速度、graph-linker 消费
+- **使用**：
+  ```bash
+  node /home/ai/.openclaw/workspace/custom-skills/graph-linker-monitor/check-graph-linker.js
+  ```
+- **输出**：Stream 概况 / Consumer 状态 / 积压分析 / 速率分析 / 预估时间
+- **状态**：✅ 运行中
+
 ---
 
 ### 自我监控系统

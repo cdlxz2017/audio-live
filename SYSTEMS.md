@@ -41,53 +41,267 @@
 ## 记忆与知识
 
 ### 记忆系统
-- **触发词**：记忆系统、检查记忆、health check、数据链路
+- **触发词**：记忆系统、检查记忆、health check、数据链路、召回系统
 - **使用**：
   ```bash
   node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
   node /home/ai/.openclaw/workspace/memory-system/scripts/system-deep-inspector.js
   ```
-- **包含**：session-extractor、graph-linker、summary-extractor、outbox-writer、SelfHealer、AutoMonitor
+- **包含**：session-summary-extractor（Session级摘要Daemon，10分钟扫描）、session-extractor、graph-linker、summary-extractor、outbox-writer、graphify-opus-manager
 - **端口**：18789（Gateway）/ 31234（Graphify Query）
-- **状态**：✅ 运行中
+- **版本**：v4.5+（新Session摘要召回 + Session级摘要Daemon：2026-04-16）
+- **状态**：✅ 运行中（6/6进程）
 
-#### 记忆系统 — 数据链路一览
+#### Session级摘要系统（session-summary-extractor）
 
-| 链路 | 路径 | 速率 | 状态 |
+> **文件**：`memory-system/scripts/session-summary-extractor.js`
+> **PM2进程**：`session-summary-extractor`（Daemon模式，每10分钟扫描）
+> **特点**：整个Session全文提取 → 分段 → 并行LLM → 合并摘要，完整率>90%
+
+**与旧summary-extractor的区别**：
+
+| 维度 | 旧summary-extractor | 新session-summary-extractor |
+|------|--------------------|------------------------------|
+| 触发方式 | 30秒轮询，4条消息触发 | Session结束后1分钟空闲检测 |
+| 内容范围 | 固定窗口+turn_index配对 | **整个Session全文** |
+| 摘要数量 | 每2-4条消息1条 | 每Session多条（按长度分段）|
+| 摘要格式 | 短摘要（1-2句）| **结构化5字段**（核心主题/用户需求/AI回复/事实决策/结果跟进）|
+| 内容完整率 | ~10% | **>90%** |
+| 向量检索质量 | 中等 | **优秀（语义相似度0.68-0.78）** |
+| 进度跟踪 | 无 | `session_summary_cursor`表 |
+
+**backfill命令**（手动重新处理某Session）：
+```bash
+node /home/ai/.openclaw/workspace/memory-system/scripts/session-summary-extractor.js --backfill
+```
+
+**监控命令**：
+```bash
+pm2 logs session-summary-extractor --nostream --lines 20
+```
+
+**关键指标**（2026-04-16实测）：
+- 最大Session处理：2780条消息 / 459K token / 72段 / ~15分钟
+- LLM重试率：**0%**（qwen3.6-plus一次成功率100%）
+- 每段耗时：~10-20秒
+- 向量召回相似度：0.68-0.78（语义相关）
+
+#### 记忆系统 — 数据链路一览（完整版）
+
+| 链路 | 路径 | 说明 | 状态 |
 |------|------|------|------|
-| **L1** Session JSONL → conversation_messages | session-extractor（PM2）轮询JSONL文件 | ~20条/小时 | ✅ 畅通 |
-| **L2** conversation_messages → memory_summaries | summary-extractor（PM2）30秒轮询，4条消息触发摘要 | ~1-2条/小时 | ✅ 畅通 |
-| **L3** memory_summaries → summary_message_links | 迁移脚本一次性写入（604条历史关系） | 静止 | ✅ 完成 |
-| **L4** summary-extractor → memory_outbox | Outbox Pattern：事务双写（memory_summaries + memory_outbox）| 待新摘要触发 | ✅ 已改造 |
-| **L5** memory_outbox → personal_memories | outbox-writer（PM2）每10秒消费pending事件 | 待触发 | ✅ 已部署 |
-| **L6** memory_outbox → Neo4j PersonalMemory | outbox-writer 异步写入 Neo4j | 待触发 | ✅ 已部署 |
-| **L7** session-extractor → personal_memories | 直接写入（主写入路径，非VALUABLE_TYPES摘要） | ~450-500条/小时 | ✅ 主要来源 |
-| **L8** Redis Stream → graph-linker → Neo4j | graph-linker（PM2）消费graph:sync:events建立ALIGNED_TO关系 | 修复中 | ⚠️ 修复中 |
-| **L9** 用户消息 → recall hook → session-recall | recall hook调用session-recall.js，pgvector召回 | P50:79ms P99:419ms | ✅ 正常 |
-| **L10** get-summary-sources追溯接口 | get-summary-sources.js双向追溯（summary↔message）| 查询级 | ✅ 可用 |
+| **L0** | OpenClaw Gateway → recall hook | before_prompt_build 触发 recall hook | ✅ |
+| **L1** | Session JSONL → conversation_messages | session-extractor PM2 轮询 JSONL 文件 | ✅ 畅通 |
+| **L2** | conversation_messages → memory_summaries | summary-extractor PM2 30秒轮询，4条消息触发摘要 | ✅ 畅通 |
+| **L3** | memory_summaries → summary_message_links | 迁移脚本一次性写入（604条历史关系） | ✅ 完成 |
+| **L4** | summary-extractor → memory_outbox | Outbox Pattern：事务双写（memory_summaries + memory_outbox）| ✅ |
+| **L5** | memory_outbox → personal_memories | outbox-writer PM2 每10秒消费 pending 事件 | ✅ |
+| **L6** | memory_outbox → Neo4j PersonalMemory | outbox-writer 异步写入 Neo4j | ✅ |
+| **L7** | session-extractor → personal_memories | 直接写入（主写入路径）| ✅ 主要来源 |
+| **L8** | Redis Stream → graph-linker → Neo4j | graph-linker PM2 消费 graph:sync:events | ✅ |
+| **L9** | 用户消息 → recall hook → session-recall | recall hook → session-recall.js → pgvector HNSW 召回 | ✅ |
+| **L10** | recall hook → cascadeRecall | 三级级联召回（新增 v4.4）| ✅ |
+| **L11** | get-summary-sources 追溯接口 | get-summary-sources.js 双向追溯（summary↔message）| ✅ |
 
-#### 关键表数据量
+#### 召回系统架构（v4.4 — Week 3 完成）
+
+**核心组件**：
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| Recall Hook | `hooks/recall-hook/handler.js` | before_prompt_build 入口，三级路由 |
+| RecallService | `scripts/session-recall.js` | 两套召回：普通 recall + cascadeRecall 级联 |
+| Config | `scripts/config.js` | 意图配置 + cascadeRecallConfig |
+| Graphify Fetch | `scripts/graphify-fetch.js` | 代码图谱对齐（已修复 node.id）|
+| Redis Module | `scripts/redis.js` | 缓存 + invalidateRecallCache |
+| Embedder | `scripts/embedder.js` | BGE-m3 Ollama 向量嵌入 |
+| Session Context | `scripts/session-context-loader.js` | Session 管理 + Proactive |
+
+**召回流程**：
+
+```
+用户消息
+  │
+  ▼
+[before_prompt_build] handler.js 触发
+  │
+  ▼
+classifyIntent() → 8类意图
+  │
+  ├── TECHNICAL/PROJECT/REASONING → shouldGraphify = true
+  └── 其他 → shouldGraphify = false
+  │
+  ▼
+级联路由判断（shouldCascade）
+  ├── 触发关键词：'上次'、'之前说过'、'我记得'、'继续'、'接着'
+  ├── 话题切换 + query ≥ 4字
+  └── 强制刷新（长时间沉默）
+  │
+  ├── YES → cascadeRecall 三级召回
+  │   ├── Phase1: memory_summaries + 3h时间窗口（HNSW）
+  │   ├── Phase2: 摘要关键词 → memories entity 匹配
+  │   └── Phase3: summary_message_links → conversation_messages 溯源
+  │
+  └── NO → 普通 recall
+      ├── HNSW 三表并行（memories / memory_summaries / personal_memories）
+      ├── 动态加权排序（语义 + 时间衰减 + 置信度）
+      ├── importance_score ≥ 5 过滤（personal_memories）
+      └── Graphify 代码上下文（仅 TECHNICAL/PROJECT/REASONING）
+  │
+  ▼
+buildMemoryPrompt() → prependContext 注入 LLM
+  │
+  ▼
+[after_response] → 后台异步任务（Promise.allSettled）
+```
+
+**意图配置（8类）**：
+
+| 意图 | Graphify | Tier | 半衰期 |
+|------|----------|------|--------|
+| TECHNICAL | ✅ | 1 | 4h |
+| PROJECT | ✅ | 1 | 4h |
+| REASONING | ✅ | 2 | 2h |
+| FACTUAL | ❌ | 1 | 2h |
+| PREFERENCE | ❌ | 1 | 8h |
+| EVENT | ❌ | 1 | 0.5h |
+| PERSON | ❌ | 1 | 4h |
+| DEFAULT | ❌ | 1 | 2h |
+
+**级联召回配置**：
+
+```javascript
+cascadeRecallConfig: {
+  enabled: true,
+  triggerKeywords: ['上次', '之前说过', '我记得', '上次聊', '继续', '接着'],
+  minQueryLength: 4,
+  defaultTimeWindow: 3,  // 小时
+}
+```
+
+#### 关键表数据量（2026-04-16 更新）
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | ~4600 | 原始对话存档 |
-| memory_summaries | ~724 | 摘要（1-2条/小时）|
-| personal_memories | ~18500 | 主记忆（450-500条/小时主要来源）|
-| summary_message_links | 604 | 历史迁移的junction table |
-| memory_outbox | 0 | 待新摘要产生后有数据 |
-| recall_logs | ~330 | 召回历史记录 |
-| entity_registry | 0 | Phase 3 relation-discoverer填充 |
-| memory_relations | 0 | 已废弃（迁移至Neo4j）|
+| conversation_messages | ~4600+ | 原始对话存档 |
+| memory_summaries | **770+** | 摘要（Session级新摘要，v4.5+）|
+| memories | **2645** | 结构化 entity/attr/value |
+| personal_memories | **19326** | 主记忆（importance_score ≥ 5 过滤后召回）|
+| summary_message_links | 604 | 摘要↔消息 junction table |
+| recall_logs | **360** | 召回日志（含 sender_id_text）|
+| graphify_code_embeddings | ~79k | 代码图谱节点 |
+| memory_outbox | 0 | 待新摘要触发 |
+| session_summary_cursor | 6+ | Session级摘要进度跟踪 |
 
 #### PM2 进程清单
 
-| 进程 | 端口 | 职责 | 状态 |
-|------|------|------|------|
-| session-extractor | — | JSONL→conversation_messages | ✅ online |
-| summary-extractor | — | conversation_messages→memory_summaries+outbox | ✅ online |
-| outbox-writer | — | memory_outbox→personal_memories+Neo4j | ✅ online |
-| graph-linker | — | Redis Stream→Neo4j（ALIGNED_TO关系）| ⚠️ 修复中 |
-| session-recall | — | 向量召回API（31234端口）| ✅ online |
+| 进程 | 职责 | 状态 |
+|------|------|------|
+| session-summary-extractor | Session级摘要（PM2 daemon，10分钟扫描）| ✅ online（v4.5+，qwen3.6-plus）|
+| session-extractor | JSONL → conversation_messages | ✅ online |
+| summary-extractor | conversation_messages → memory_summaries + outbox | ✅ online（restart 3次/小时）|
+| outbox-writer | memory_outbox → personal_memories + Neo4j | ✅ online |
+| graph-linker | Redis Stream → Neo4j ALIGNED_TO | ✅ online |
+| graphify-opus-manager | Graphify 代码节点管理 | ✅ online |
+
+#### EXEC 改动清单（Week 1-3 完成记录）
+
+| EXEC | 改动 | 危险点 | 状态 |
+|------|------|--------|------|
+| EXEC-001 | shouldGraphify 配置驱动 | P0-1 | ✅ |
+| EXEC-002 | config.js 非技术意图 graphify=false | P0-1配套 | ✅ |
+| EXEC-003 | extractAlignedIds node.id 修复 | P1-1 | ✅ |
+| EXEC-004 | setImmediate → Promise.allSettled | P0-2 | ✅ |
+| EXEC-005 | _vectorSearchSummaries + recentHours | P1-2 | ✅ |
+| EXEC-006 | invalidateRecallCache 新增 | P1-3 | ✅ |
+| EXEC-007 | recall_logs user_id→nullable + sender_id_text | P1-4 | ✅ |
+| EXEC-008 | _vectorSearchMemories + entities 参数 | P1-5 | ✅ |
+| EXEC-009 | TECHNICAL 正则扩展中文技术词汇 | P2-1 | ✅ |
+| EXEC-010 | cascadeRecall() 三级管道（核心）| P0-3 | ✅ |
+| EXEC-011 | personal_memories importance_score ≥ 5 过滤 | P2-2 | ✅ |
+| EXEC-012 | 动态 candidateK 分配 | P2-3 | ✅ |
+| EXEC-013 | cascadeRecall 路由逻辑 | P0-3配套 | ✅ |
+
+#### 新Session摘要召回（EXEC-NEW-01~05）
+
+> **版本**：v4.5（2026-04-16）
+> **Git Commit**：`2ccc0b4 feat(recall): Week1-3 EXEC全部完成 + 新Session摘要召回方案`
+
+**核心改进**：新 Session 冷启动时，用上一条 Session 的 `conversation_sessions.summary` 作为 recall query，替代随机 query 池。
+
+**修复的危险点**：
+
+| 危险点 | 根因 | EXEC | 状态 |
+|--------|------|------|------|
+| P0-1：`markSessionForUser` 在 `loadPreviousContext` 之前调用 | Redis key 被覆盖，永远查到当前 session | EXEC-NEW-01 | ✅ |
+| P0-2：subagent/cron session 污染 | 每次事件都标记，覆盖用户 session | EXEC-NEW-01 | ✅ |
+| P1-3：summary 为空或极短 | 无有效检查直接用作 query | EXEC-NEW-03 | ✅ |
+| P1-4：Redis 与 DB 数据不一致 | Redis miss 时无 DB fallback | EXEC-NEW-02 | ✅ |
+| P2-5：query 过长稀释向量搜索 | 无截断直接作为 query | EXEC-NEW-03 | ✅ |
+| P1-7：时间间隔过长导致记忆过时 | 无陈旧检测 | EXEC-NEW-03 | ✅ |
+
+**新 Session 召回流程（v4.5）**：
+
+```
+新 session 到来
+  │
+  ▼
+loadPreviousContext()     ← ✅ 先执行（在 markSessionForUser 之前）
+  │
+  ▼
+markSessionForUser()      ← ✅ 后执行（仅主会话，排除 subagent/cron）
+  │
+  ▼
+preloadMemoriesForNewSession()
+  │
+  ├── getLastUserSessionSummary()  ← 新增
+  │   ├── Redis优先：session:summary:{sessionKey}
+  │   └── DB兜底：conversation_sessions.summary
+  │
+  ├── truncateSummaryForQuery(150字符)  ← 新增（在标点处截断）
+  │
+  ├── isSessionStale(>48h)  ← 新增（陈旧则扩大召回范围）
+  │
+  └── fallback → 随机 query 池（summary无效时）
+```
+
+**新增配置项（config.js proactive）**：
+
+```javascript
+proactive: {
+  maxSummaryQueryLen: 150,     // summary最大长度
+  minSummaryQueryLen: 30,      // summary最小有效长度
+  maxSessionAgeHours: 48,      // session陈旧阈值
+}
+```
+
+**新增函数**：
+
+| 函数 | 文件 | 说明 |
+|------|------|------|
+| `getLastUserSessionSummary()` | session-context-loader.js | Redis优先 + DB兜底获取上一条用户session summary |
+| `truncateSummaryForQuery()` | session-context-loader.js | 在标点处智能截断summary |
+| `isSessionStale()` | session-context-loader.js | 判断session是否陈旧(>48h) |
+
+#### 文档索引
+
+| 文档 | 路径 |
+|------|------|
+| 召回系统设计 | `docs/RECALL-DESIGN.md` |
+| 深度分析报告 | `docs/RECALL-DEEP-ANALYSIS-FINAL.md` |
+| 执行方案（Week1-3）| `docs/RECALL-EXECUTION-PLAN.md` |
+| 测试报告 | `docs/RECALL-TEST-REPORT.md` |
+| 数据链文档 | `docs/RECALL-DATA-CHAIN.md` |
+| Session摘要召回方案 | `docs/RECALL-SESSION-SUMMARY-EXEC-PLAN.md` |
+
+#### graph-linker 状态监控
+- **触发词**：graph-linker 状态、graph-linker 积压、graph-linker 速度、graph-linker 消费
+- **使用**：
+  ```bash
+  node /home/ai/.openclaw/workspace/custom-skills/graph-linker-monitor/check-graph-linker.js
+  ```
+- **输出**：Stream 概况 / Consumer 状态 / 积压分析 / 速率分析 / 预估时间
+- **状态**：✅ 正常运行
 
 #### graph-linker 状态监控
 - **触发词**：graph-linker 状态、graph-linker 积压、graph-linker 速度、graph-linker 消费
@@ -441,4 +655,4 @@ cd ~/.config && git add . && git commit -m "描述"
 
 ---
 
-_最后更新：2026-04-16_
+_最后更新：2026-04-16（Session级摘要Daemon上线，v4.5+完成）_

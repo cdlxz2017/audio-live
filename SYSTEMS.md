@@ -430,16 +430,24 @@ proactive: {
   - **Python HTTP 蜜罐**：端口 8080，伪装 Apache/2.4.41，提供/admin、/api/status等诱饵路径
   - **天刑联动**：cowrie-tianxing PM2进程，攻击事件自动触发IP扫描
   - **fail2ban 联动**：cowrie-ssh / cowrie-telnet jail，登录失败自动封禁
-- **PM2 进程**：
-  | 进程 | 端口 | 状态 |
-  |------|------|------|
-  | cowrie-ssh | 2222 | ✅ online |
-  | cowrie-tianxing | — | ✅ online |
-  | beelzebub-http | 8080 | ✅ online |
+- **进程管理**：
+  | 进程 | 托管方式 | 端口 | 状态 |
+  |------|----------|------|------|
+  | cowrie（twistd） | systemd（cowrie.service） | 2222/2223 | ✅ online |
+  | cowrie-to-tianxing | PM2（cowrie-tianxing） | — | ✅ online |
+  | beelzebub-http | PM2（beelzebub-http） | 8080 | ✅ online |
+- **systemd 管理命令**：
+  ```bash
+  sudo systemctl start cowrie     # 启动
+  sudo systemctl stop cowrie      # 停止
+  sudo systemctl restart cowrie   # 重启
+  sudo systemctl status cowrie    # 状态
+  ```
+- **注意**：cowrie-ssh PM2 进程因与 systemd 托管实例冲突（端口冲突）已删除，改用 systemd 托管实现自愈
 - **UFW 规则**：2222/tcp、2223/tcp、8080/tcp 已放行
 - **SSH 指纹**：与真实系统 OpenSSH_9.6p1 对齐
 - **日志路径**：
-  - Cowrie：`/home/ai/services/honeypot/cowrie-src/var/log/cowrie/`
+  - Cowrie：`/home/ai/services/honeypot/cowrie-src/log/cowrie.log`（JSON格式）
   - HTTP蜜罐：`/home/ai/services/honeypot/beelzebub.log`
 - **scan-ip.sh**：`/home/ai/projects/tianxing-defense/scripts/scan-ip.sh`
 - **Goal追踪**：Neo4j Goal honeypot-defense-2026 ✅ 100% 完成

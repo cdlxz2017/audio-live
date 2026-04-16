@@ -186,7 +186,7 @@ cascadeRecallConfig: {
 | conversation_messages | **5196** | 原始对话存档 |
 | memory_summaries | **108** | 摘要（v4.5+ Session级）|
 | memories | **2650** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **25189** | 主记忆 |
+| personal_memories | **25197** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
 | recall_logs | **371** | 召回日志 |
 | graphify_code_embeddings | **80364** | 代码图谱节点 |

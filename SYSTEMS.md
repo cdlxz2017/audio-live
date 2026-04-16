@@ -280,6 +280,7 @@ proactive: {
 | 函数 | 文件 | 说明 |
 |------|------|------|
 | `getLastUserSessionSummary()` | session-context-loader.js | Redis优先 + DB兜底获取上一条用户session summary |
+| `loadPreviousContext()` | session-context-loader.js | **直接查 memory_summaries 表**（绕过 Redis summary=null 问题，2026-04-16）|
 | `truncateSummaryForQuery()` | session-context-loader.js | 在标点处智能截断summary |
 | `isSessionStale()` | session-context-loader.js | 判断session是否陈旧(>48h) |
 

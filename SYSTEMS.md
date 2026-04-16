@@ -146,7 +146,7 @@
   |------|------|------|
   | tiandao-member | 3002 | 成员管理 |
   | tiandao-auth | 3004 | 认证服务 |
-  | tiandao-karma | 3007 | 业力系统 |
+  | tiandao-karma | 3006 | 业力系统 |
   | tiandao-worldevent | 3011 | 现实事件接入 |
   | tiandao-admin-app | 3013 | 管理后台API |
 - **状态**：✅ 运行中（PM2）

@@ -49,8 +49,8 @@
   ```
 - **包含**：session-summary-extractor（Session级摘要Daemon，10分钟扫描）、session-extractor、graph-linker、summary-extractor、outbox-writer、graphify-opus-manager
 - **端口**：18789（Gateway）/ 31234（Graphify Query）
-- **版本**：v4.5+（新Session摘要召回 + Session级摘要Daemon：2026-04-16）
-- **状态**：✅ 运行中（6/6进程）
+- **版本**：v4.5+（新Session摘要召回 + Session级摘要Daemon：2026-04-16，**2026-04-17已部署daemon**）
+- **状态**：✅ 运行中（**7/7进程**，含session-summary-extractor daemon）
 
 #### Session级摘要系统（session-summary-extractor）
 
@@ -179,30 +179,33 @@ cascadeRecallConfig: {
 }
 ```
 
-#### 关键表数据量（2026-04-16 更新）
+#### 关键表数据量（2026-04-17 更新）
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | ~4600+ | 原始对话存档 |
-| memory_summaries | **770+** | 摘要（Session级新摘要，v4.5+）|
-| memories | **2645** | 结构化 entity/attr/value |
-| personal_memories | **19326** | 主记忆（importance_score ≥ 5 过滤后召回）|
+| conversation_messages | **5190** | 原始对话存档 |
+| memory_summaries | **1351** | 摘要（v4.5+ Session级）|
+| memories | **2650** | 结构化 entity/attr/value（content 填充率 100%）|
+| personal_memories | **25041** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **360** | 召回日志（含 sender_id_text）|
-| graphify_code_embeddings | ~79k | 代码图谱节点 |
-| memory_outbox | 0 | 待新摘要触发 |
-| session_summary_cursor | 6+ | Session级摘要进度跟踪 |
+| recall_logs | **371** | 召回日志 |
+| graphify_code_embeddings | **80364** | 代码图谱节点 |
+| memory_outbox | 0 | 无积压 |
+| session_summary_cursor | **142** | Session级摘要进度跟踪 |
 
-#### PM2 进程清单
+#### PM2 进程清单（2026-04-17 核实）
 
 | 进程 | 职责 | 状态 |
 |------|------|------|
-| session-summary-extractor | Session级摘要（PM2 daemon，10分钟扫描）| ✅ online（v4.5+，qwen3.6-plus）|
+| session-summary-extractor | Session级摘要Daemon（每5分钟扫描，已部署）| ✅ online（v4.5+，daemon）|
 | session-extractor | JSONL → conversation_messages | ✅ online |
-| summary-extractor | conversation_messages → memory_summaries + outbox | ✅ online（restart 3次/小时）|
+| summary-extractor | conversation_messages → memory_summaries + outbox | ✅ online |
 | outbox-writer | memory_outbox → personal_memories + Neo4j | ✅ online |
 | graph-linker | Redis Stream → Neo4j ALIGNED_TO | ✅ online |
 | graphify-opus-manager | Graphify 代码节点管理 | ✅ online |
+| hermes-server | 玄一推理服务（端口31235）| ✅ online |
+| hermes-web | 玄一 Web 服务（端口31236）| ✅ online |
+| cowrie-tianxing | 蜜罐攻击IP → 天刑扫描 | ✅ online |
 
 #### EXEC 改动清单（Week 1-3 完成记录）
 

@@ -183,15 +183,58 @@ cascadeRecallConfig: {
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **5196** | 原始对话存档 |
+| conversation_messages | **5205** | 原始对话存档 |
 | memory_summaries | **108** | 摘要（v4.5+ Session级）|
 | memories | **2650** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **25206** | 主记忆 |
+| personal_memories | **25425** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
 | recall_logs | **371** | 召回日志 |
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
 | memory_outbox | 0 | 无积压 |
 | session_summary_cursor | **142** | Session级摘要进度跟踪 |
+
+#### 数据库快照表（方案二 — 长期可观测）
+
+> **表名**：`memory_snapshots`
+> **写入方**：`health-check.js`（每次巡检自动写入）
+> **用途**：SYSTEMS.md 数据量手动更新容易滞后，数据库快照提供时序可观测性，支持历史趋势查询
+
+**查询命令**：
+```bash
+# 查看最新快照
+PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
+  "SELECT snapshot_time, conversation_messages, personal_memories, memory_summaries, session_summary_cursor FROM memory_snapshots ORDER BY snapshot_time DESC LIMIT 1;"
+
+# 查看历史趋势（最近N条）
+PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
+  "SELECT snapshot_time, conversation_messages, personal_memories, memory_summaries FROM memory_snapshots ORDER BY snapshot_time DESC LIMIT 10;"
+
+# 计算两次快照之间的增长量
+PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
+  "SELECT (personal_memories - LAG(personal_memories) OVER (ORDER BY snapshot_time)) as growth FROM memory_snapshots ORDER BY snapshot_time DESC LIMIT 10;"
+```
+
+**表结构**：
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | SERIAL | 主键 |
+| snapshot_time | TIMESTAMPTZ | 快照时间 |
+| conversation_messages | INT | 对话存档条数 |
+| memories | INT | 结构化记忆条数 |
+| memories_content_fill_rate | FLOAT | content字段填充率 |
+| personal_memories | INT | 主记忆条数 |
+| memory_summaries | INT | 摘要条数 |
+| recall_logs | INT | 召回日志条数 |
+| session_summary_cursor | INT | Session摘要进度 |
+| personal_memory_nodes | INT | Neo4j PersonalMemory节点数 |
+| graphify_code_nodes | INT | Neo4j GraphifyCode节点数 |
+| aligned_relationships | INT | 对齐关系数 |
+| memory_summary_nodes | INT | Neo4j Memory_summary节点数 |
+| personal_entity_nodes | INT | Neo4j PersonalEntity节点数 |
+| redis_graph_sync_len | INT | Redis Stream graph:sync 长度 |
+| redis_latency_ms | INT | Redis延迟（ms）|
+
+**状态**：✅ 运行中（5条快照记录，最早 2026-04-16 20:03）
 
 #### PM2 进程清单（2026-04-17 核实）
 

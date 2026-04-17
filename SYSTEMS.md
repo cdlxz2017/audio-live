@@ -40,6 +40,23 @@
 
 ## 记忆与知识
 
+### 三层记忆追溯系统（Three-Layer Memory Lookup）
+- **触发词**：追溯原始对话、三层记忆、查原始消息、摘要来源、lookup
+- **使用方法**：
+  ```bash
+  node /home/ai/.openclaw/workspace/custom-skills/three-layer-memory-lookup/lookup.js <summary_id>
+  ```
+  示例：`node lookup.js 1710`
+- **Skill 路径**：`custom-skills/three-layer-memory-lookup/SKILL.md`
+- **架构**：
+  ```
+  memory_summaries
+    ├─ source_session_id ──→ conversation_messages（整段会话）
+    └─ source_message_ids ──→ conversation_messages（触发消息）
+  ```
+- **适用场景**：摘要 → 原始对话追溯、核实决策背景、审计对话记录
+- **状态**：✅ 已创建
+
 ### 记忆系统
 - **触发词**：记忆系统、检查记忆、health check、数据链路、召回系统
 - **使用**：
@@ -714,6 +731,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 4G语音v2 | ✅ 运行中 |
 | 远程录音 | ✅ 运行中 |
 | 记忆系统 | ✅ 运行中（6/6进程）|
+| 三层记忆追溯 | ✅ 已创建 |
 | 自我监控 | ✅ 运行中 |
 | 邮件系统 | ✅ 正常 |
 | 天道·系统 | ✅ 运行中（5服务）|

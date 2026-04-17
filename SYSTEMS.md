@@ -183,15 +183,15 @@ cascadeRecallConfig: {
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **5205** | 原始对话存档 |
+| conversation_messages | **5286** | 原始对话存档 |
 | memory_summaries | **108** | 摘要（v4.5+ Session级）|
-| memories | **2650** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **25425** | 主记忆 |
+| memories | **2651** | 结构化 entity/attr/value（content 填充率 100%）|
+| personal_memories | **26797** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
 | recall_logs | **371** | 召回日志 |
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
 | memory_outbox | 0 | 无积压 |
-| session_summary_cursor | **142** | Session级摘要进度跟踪 |
+| session_summary_cursor | **143** | Session级摘要进度跟踪 |
 
 #### 数据库快照表（方案二 — 长期可观测）
 

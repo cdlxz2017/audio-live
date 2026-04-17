@@ -71,8 +71,8 @@ def send(to_addr: str, subject: str, body: str,
             print(f"[Dry Run]   - {a}")
         return
 
-    print(f"正在连接 {SMTP_HOST}:{SMTP_PORT}...")
-    server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+    print(f"正在连接 {SMTP_HOST}:{SMTP_PORT} (IPv4)...")
+    server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30, source_address=('0.0.0.0', 0))
     server.starttls()
     server.login(SMTP_USER, SMTP_PASS)
     server.send_message(msg)

@@ -1,29 +1,32 @@
-# 4G语音通讯系统 v2 配置文件
-# API Keys 放这里，不要硬编码
+# 4G语音通讯系统 v2 配置
+# API Key 和硬件端口全部自动检测，无需手动填写
+# 仅在其他值需要覆盖时填写
 
 database:
   url: postgresql://openclaw_ai:zyxrcy910128@localhost:5432/openclaw_memory
 
-serial:
-  at_port: /dev/ttyUSB1
-  sms_port: /dev/ttyUSB2
-  baud: 115200
+# 硬件端口（自动检测，可留空）
+# serial:
+#   at_port: /dev/ttyUSB1    # 自动扫描 AT 命令口
+#   sms_port: /dev/ttyUSB2   # 自动扫描短信口
+#   baud: 115200
 
-audio:
-  record_device: plughw:1,0
-  output_device: plughw:0,3
-  sample_rate: 16000
-  gain: 0.3
-  channels: 1
+# 音频设备（自动检测，可留空）
+# audio:
+#   record_device: plughw:1,0  # 自动检测 USB 录音设备
+#   output_device: plughw:0,3  # 自动检测 TTS 播放设备（HDMI）
+#   sample_rate: 16000
+#   gain: 0.3
+#   channels: 1
 
 whisper:
   model: large-v3-turbo
 
+# LLM（MiniMax API Key 自动从 OpenClaw 配置读取）
 llm:
-  provider: minimax
-  api_key: YOUR_MINIMAX_API_KEY
   model: MiniMax-M2.7
-  base_url: https://api.minimax.chat/v1
+  base_url: https://api.minimaxi.com/anthropic
+  # api_key:留空，自动检测
 
 tts:
   provider: edge

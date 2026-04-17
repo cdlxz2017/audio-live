@@ -179,19 +179,42 @@ cascadeRecallConfig: {
 }
 ```
 
+#### latest_summaries_cache — 最新5条摘要滚动缓存
+> **B2方案**：新建专用表 `latest_summaries_cache`，每次摘要创建后自动写入，维护最新5条
+> **写入钩子**：`summary-extractor.js` → `_cacheLatestSummary()`
+> **维护策略**：INSERT后立即DELETE淘汰最旧条，保留created_at最新的5条
+
+| 字段 | 说明 |
+|------|------|
+| `summary_id` | 关联 memory_summaries.id |
+| `query_keywords` | 从摘要提取的合成关键词 |
+| `summary_preview` | 前120字预览 |
+| `summary_full` | **完整摘要**（主人要求）|
+| `summary_type` | 类型：factual/decision/event/preference |
+| `created_at` | 滚动窗口排序依据 |
+
+**查询命令**：
+```bash
+PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
+  "SELECT id, summary_id, left(summary_preview,80), summary_type, created_at FROM latest_summaries_cache ORDER BY created_at DESC;"
+```
+
+---
+
 #### 关键表数据量（2026/4/17 更新）
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **5286** | 原始对话存档 |
+| conversation_messages | **5353** | 原始对话存档 |
 | memory_summaries | **108** | 摘要（v4.5+ Session级）|
-| memories | **2651** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **26797** | 主记忆 |
+| memories | **2652** | 结构化 entity/attr/value（content 填充率 100%）|
+| personal_memories | **27374** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **371** | 召回日志 |
+| recall_logs | **374** | 召回日志 |
+| latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
 | memory_outbox | 0 | 无积压 |
-| session_summary_cursor | **143** | Session级摘要进度跟踪 |
+| session_summary_cursor | **144** | Session级摘要进度跟踪 |
 
 #### 数据库快照表（方案二 — 长期可观测）
 
@@ -710,4 +733,4 @@ cd ~/.config && git add . && git commit -m "描述"
 
 ---
 
-_最后更新：2026-04-16（Session级摘要Daemon上线，v4.5+完成）_
+_最后更新：2026-04-17（latest_summaries_cache B2方案上线）_

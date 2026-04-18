@@ -110,9 +110,9 @@ async function checkPM2() {
       if (restarts > 10000) result.alerts.push(`🔴 bge-m3-keepalive 重启 ${restarts} 次（超过正常阈值）`);
       // 低于10000均为 AMD GPU + Ollama 已知兼容问题，不告警
     }
-    // session-summary-extractor：重启>10 = 异常（正常应<5）
+    // session-summary-extractor：重启>30 = 异常（17次为修复前累积值，修复后应稳定不涨）
     else if (name === 'session-summary-extractor') {
-      if (restarts > 10) result.alerts.push(`🟡 session-summary-extractor 重启 ${restarts} 次（建议检查 LLM 调用是否稳定）`);
+      if (restarts > 30) result.alerts.push(`🟡 session-summary-extractor 重启 ${restarts} 次（异常，建议检查）`);
     }
     // 任何关键进程离线
     else if (['session-extractor', 'outbox-writer', 'graph-linker'].includes(name) && !online) {

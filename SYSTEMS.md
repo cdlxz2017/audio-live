@@ -213,16 +213,16 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **5665** | 原始对话存档 |
-| memory_summaries | **108** | 摘要（v4.5+ Session级）|
+| conversation_messages | **3921** | 原始对话存档 |
+| memory_summaries | **1838** | 摘要（v4.5+ Session级）|
 | memories | **2653** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **34757** | 主记忆 |
+| personal_memories | **37172** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **393** | 召回日志 |
+| recall_logs | **398** | 召回日志 |
 | latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
 | memory_outbox | 0 | 无积压 |
-| session_summary_cursor | **146** | Session级摘要进度跟踪 |
+| session_summary_cursor | **156** | Session级摘要进度跟踪 |
 
 #### 数据库快照表（方案二 — 长期可观测）
 

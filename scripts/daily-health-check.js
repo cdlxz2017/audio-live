@@ -83,7 +83,7 @@ async function checkPM2() {
   try { procs = JSON.parse(stdout.trim()); } catch { return { ok: false, error: 'pm2 JSON parse failed' }; }
   
   const CRITICAL_NAMES = [
-    'bge-m3-keepalive', 'session-extractor', 'session-summary-extractor',
+    'bge-m3-keepalive', 'session-extractor',
     'graph-linker', 'graphify-opus-manager', 'hermes-server'
   ];
   

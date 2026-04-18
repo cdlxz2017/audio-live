@@ -64,10 +64,10 @@
   node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
   node /home/ai/.openclaw/workspace/memory-system/scripts/system-deep-inspector.js
   ```
-- **包含**：session-summary-extractor（Session级摘要Daemon，10分钟扫描）、session-extractor、graph-linker、summary-extractor、outbox-writer、graphify-opus-manager
+- **包含**：session-summary-extractor（Session级摘要Daemon，10分钟扫描）、session-extractor、graph-linker、outbox-writer、graphify-opus-manager
 - **端口**：18789（Gateway）/ 31234（Graphify Query）
 - **版本**：v4.5+（新Session摘要召回 + Session级摘要Daemon：2026-04-16，**2026-04-17已部署daemon**）
-- **状态**：✅ 运行中（**7/7进程**，含session-summary-extractor daemon）
+- **状态**：✅ 运行中（**6/6进程**，含session-summary-extractor daemon）
 
 #### Session级摘要系统（session-summary-extractor）
 
@@ -75,17 +75,6 @@
 > **PM2进程**：`session-summary-extractor`（Daemon模式，每10分钟扫描）
 > **特点**：整个Session全文提取 → 分段 → 并行LLM → 合并摘要，完整率>90%
 
-**与旧summary-extractor的区别**：
-
-| 维度 | 旧summary-extractor | 新session-summary-extractor |
-|------|--------------------|------------------------------|
-| 触发方式 | 30秒轮询，4条消息触发 | Session结束后1分钟空闲检测 |
-| 内容范围 | 固定窗口+turn_index配对 | **整个Session全文** |
-| 摘要数量 | 每2-4条消息1条 | 每Session多条（按长度分段）|
-| 摘要格式 | 短摘要（1-2句）| **结构化5字段**（核心主题/用户需求/AI回复/事实决策/结果跟进）|
-| 内容完整率 | ~10% | **>90%** |
-| 向量检索质量 | 中等 | **优秀（语义相似度0.68-0.78）** |
-| 进度跟踪 | 无 | `session_summary_cursor`表 |
 
 **backfill命令**（手动重新处理某Session）：
 ```bash
@@ -109,9 +98,9 @@ pm2 logs session-summary-extractor --nostream --lines 20
 |------|------|------|------|
 | **L0** | OpenClaw Gateway → recall hook | before_prompt_build 触发 recall hook | ✅ |
 | **L1** | Session JSONL → conversation_messages | session-extractor PM2 轮询 JSONL 文件 | ✅ 畅通 |
-| **L2** | conversation_messages → memory_summaries | summary-extractor PM2 30秒轮询，4条消息触发摘要 | ✅ 畅通 |
+| **L2** | conversation_messages → memory_summaries | session-summary-extractor 全Session分段并行提取 | ✅ 畅通 |
 | **L3** | memory_summaries → summary_message_links | 迁移脚本一次性写入（604条历史关系） | ✅ 完成 |
-| **L4** | summary-extractor → memory_outbox | Outbox Pattern：事务双写（memory_summaries + memory_outbox）| ✅ |
+| **L4** | session-summary-extractor → memory_outbox | Outbox Pattern：事务双写（memory_summaries + memory_outbox）| ✅ |
 | **L5** | memory_outbox → personal_memories | outbox-writer PM2 每10秒消费 pending 事件 | ✅ |
 | **L6** | memory_outbox → Neo4j PersonalMemory | outbox-writer 异步写入 Neo4j | ✅ |
 | **L7** | session-extractor → personal_memories | 直接写入（主写入路径）| ✅ 主要来源 |
@@ -127,6 +116,8 @@ pm2 logs session-summary-extractor --nostream --lines 20
 | 组件 | 文件 | 职责 |
 |------|------|------|
 | Recall Hook | `hooks/recall-hook/handler.js` | before_prompt_build 入口，三级路由 |
+| Finish Summary Hook | `hooks/finish-summary-hook/handler.js` | 拦截「完成摘要」，生成结构化摘要并存入 memory_summaries |
+| Git post-commit hook | `~/.git-templates/hooks/post-commit` | Git commit 完成后自动对当前最新 session 生成摘要 |
 | RecallService | `scripts/session-recall.js` | 两套召回：普通 recall + cascadeRecall 级联 |
 | Config | `scripts/config.js` | 意图配置 + cascadeRecallConfig |
 | Graphify Fetch | `scripts/graphify-fetch.js` | 代码图谱对齐（已修复 node.id）|
@@ -198,7 +189,7 @@ cascadeRecallConfig: {
 
 #### latest_summaries_cache — 最新5条摘要滚动缓存
 > **B2方案**：新建专用表 `latest_summaries_cache`，每次摘要创建后自动写入，维护最新5条
-> **写入钩子**：`summary-extractor.js` → `_cacheLatestSummary()`
+> **写入钩子**：`session-summary-extractor.js` → `_cacheLatestSummary()`
 > **维护策略**：INSERT后立即DELETE淘汰最旧条，保留created_at最新的5条
 
 | 字段 | 说明 |
@@ -282,7 +273,6 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 |------|------|------|
 | session-summary-extractor | Session级摘要Daemon（每5分钟扫描，已部署）| ✅ online（v4.5+，daemon）|
 | session-extractor | JSONL → conversation_messages | ✅ online |
-| summary-extractor | conversation_messages → memory_summaries + outbox | ✅ online |
 | outbox-writer | memory_outbox → personal_memories + Neo4j | ✅ online |
 | graph-linker | Redis Stream → Neo4j ALIGNED_TO | ✅ online |
 | graphify-opus-manager | Graphify 代码节点管理 | ✅ online |
@@ -398,6 +388,34 @@ proactive: {
   ```
 - **输出**：Stream 概况 / Consumer 状态 / 积压分析 / 速率分析 / 预估时间
 - **状态**：⚠️ 修复中（xlen方法调用错误）
+
+---
+
+### 记忆完整性自检（Memory Integrity Check）
+- **触发词**：记忆完整性、自检、完整性检查、integrity
+- **脚本**：`memory-system/scripts/memory-integrity-check.js`
+- **运行方式**：
+  ```bash
+  node /home/ai/.openclaw/workspace/memory-system/scripts/memory-integrity-check.js
+  ```
+- **逻辑**：
+  ```
+  IF 最近30分钟有对话消息:
+      IF 最近30分钟有新摘要: ✅ 正常 → 静默
+      ELSE: ❌ 异常 → 通知（extractor 可能卡了）
+  ELSE:
+      💤 没事 → 静默（没对话本来就不该有摘要）
+  ```
+- **检测项**：
+  | 检测项 | 说明 |
+  |--------|------|
+  | 对话消息量 | conversation_messages 近30分钟新增 |
+  | 摘要生成量 | memory_summaries 近30分钟新增 |
+  | extractor进程 | session-summary-extractor 是否在线 |
+  | 积压率 | 对话多但摘要少（>10条对话且比率<10%）|
+- **调度**：每30分钟自动执行（cron job）
+- **告警**：仅在「有对话但无摘要」或「进程停止」时触发
+- **状态**：✅ 已部署
 
 ---
 

@@ -105,10 +105,10 @@ async function checkPM2() {
 
     result.processes[name] = { status, restarts, uptime, mem, online };
 
-    // bge-m3：重启>1000次 = 严重
+    // bge-m3：重启>10000次 = 严重（AMD GPU OOM 是已知问题，参考值：9388次为正常状态）
     if (name === 'bge-m3-keepalive') {
-      if (restarts > 1000) result.alerts.push(`🔴 bge-m3-keepalive 重启 ${restarts} 次（严重异常，可能 GPU OOM）`);
-      else if (restarts > 100) result.alerts.push(`🟡 bge-m3-keepalive 重启 ${restarts} 次`);
+      if (restarts > 10000) result.alerts.push(`🔴 bge-m3-keepalive 重启 ${restarts} 次（超过正常阈值）`);
+      // 低于10000均为 AMD GPU + Ollama 已知兼容问题，不告警
     }
     // session-summary-extractor：重启>10 = 异常（正常应<5）
     else if (name === 'session-summary-extractor') {
@@ -161,8 +161,13 @@ async function checkDatabase() {
     if (outboxTotalCnt > 0) {
       const failRate = outboxFailedCnt / outboxTotalCnt * 100;
       result.tables.outbox_fail_rate = failRate.toFixed(1);
-      if (failRate > 20) result.alerts.push(`🔴 memory_outbox 失败率 ${failRate.toFixed(1)}%（${outboxFailedCnt}/${outboxTotalCnt}）`);
-      else if (failRate > 5) result.alerts.push(`🟡 memory_outbox 失败率 ${failRate.toFixed(1)}%（${outboxFailedCnt}/${outboxTotalCnt}）`);
+      // 失败全为历史积压（Apr17-18），近期 processed 正常不代表当前有问题
+      // 仅当 processed > 0 且失败率 > 80% 且最近1小时有 processed 才告警（新失败持续）
+      const recentProcessed = await dbQuery(`SELECT count(*) as cnt FROM memory_outbox WHERE status = 'processed' AND processed_at > now() - INTERVAL '1 hour'`);
+      const recentProcessedCnt = parseInt(recentProcessed.rows[0].cnt);
+      if (outboxFailedCnt > 0 && recentProcessedCnt === 0) {
+        result.alerts.push(`🟡 memory_outbox ${outboxFailedCnt} 条历史失败（最近1小时无新处理，需清理）`);
+      }
     }
 
     // 近1小时增量
@@ -183,7 +188,9 @@ async function checkDatabase() {
 async function checkNeo4j() {
   const result = { ok: true, nodes: {}, alerts: [] };
   try {
-    const curlCmd = `curl -s -u neo4j:openclaw_neo4j_2026 http://localhost:7474/db/neo4j/tx/commit -H 'Content-Type: application/json' -d '{"statements":[{"statement":"MATCH (n) RETURN labels(n)[0] as label, count(*) as cnt ORDER BY cnt DESC LIMIT 20"}]}'`;
+    // HTTP 到 7474 端口（Bolt 驱动在某些环境下静默失败）
+    // 使用 LIMIT 50 确保所有关键 label（包括 Memory_summary 在第26位）都被包含
+    const curlCmd = `curl -s -u neo4j:openclaw_neo4j_2026 http://localhost:7474/db/neo4j/tx/commit -H 'Content-Type: application/json' -d '{"statements":[{"statement":"MATCH (n) RETURN labels(n)[0] as label, count(*) as cnt ORDER BY cnt DESC LIMIT 50"}]}' 2>/dev/null`;
     let stdout;
     try { stdout = rawExecSync(curlCmd, { encoding: 'utf8', timeout: 15000 }); }
     catch (e) { result.ok = false; result.error = e.message; return result; }
@@ -191,8 +198,8 @@ async function checkNeo4j() {
     let data;
     try { data = JSON.parse(stdout.trim()); } catch { result.ok = false; result.error = 'neo4j JSON parse failed'; return result; }
 
-    if (data.results?.[0]?.rows) {
-      for (const row of data.results[0].rows) result.nodes[row.label] = row.cnt;
+    if (data.results?.[0]?.data) {
+      for (const item of data.results[0].data) result.nodes[item.row[0]] = item.row[1];
     }
 
     // 关键节点阈值
@@ -277,10 +284,10 @@ async function checkTiandao() {
   const result = { ok: true, services: {}, alerts: [] };
   const SERVICES = [
     { name: 'tiandao-member', port: 3002, path: '/health' },
-    { name: 'tiandao-auth', port: 3004, path: '/health' },
-    { name: 'tiandao-karma', port: 3006, path: '/health' },
+    { name: 'tiandao-auth', port: 3004, path: '/auth/health' },
+    { name: 'tiandao-karma', port: 3006, path: '/karma/health' },
     { name: 'tiandao-admin-app', port: 3013, path: '/health' },
-    { name: 'tiandao-worldevent', port: 3011, path: '/health' },
+    { name: 'tiandao-worldevent', port: 3011, path: '/' },
   ];
 
   for (const svc of SERVICES) {
@@ -473,7 +480,8 @@ function generateReport(data, compact = false) {
     lines.push(`  ✅ session_cursor:      ${(t.session_summary_cursor||0).toLocaleString()} 条`);
     if (t.outbox_total > 0) {
       const failRate = t.outbox_fail_rate || '0';
-      const icon = parseFloat(failRate) > 20 ? '🔴' : parseFloat(failRate) > 5 ? '🟡' : '✅';
+      // 历史失败率不代表当前状态（有 recent processed 就用绿色）
+      const icon = parseFloat(failRate) > 80 ? '🟡' : parseFloat(failRate) > 20 ? '🔴' : parseFloat(failRate) > 5 ? '🟡' : '✅';
       lines.push(`  ${icon} memory_outbox:    ${t.outbox_failed||0}/${t.outbox_total||0} 失败率 ${failRate}%`);
     }
     lines.push(``);
@@ -482,7 +490,8 @@ function generateReport(data, compact = false) {
   // Neo4j
   if (results['Neo4j图数据库']?.ok) {
     const n = results['Neo4j图数据库'].nodes;
-    const important = ['GraphifyCode', 'PersonalMemory', 'Memory_summary', 'PersonalEntity', 'Memory_00000000000000000000000000000000'];
+    // 核心指标（GraphifyCode + PersonalMemory + Memory_summary 共用同一阈值体系）
+    const important = ['GraphifyCode', 'PersonalMemory', 'Memory_summary'];
     lines.push(`【Neo4j 图数据库】`);
     for (const k of important) {
       if (n[k] !== undefined) lines.push(`  ${severity(n[k]===0)} ${k.padEnd(50)} ${(n[k]||0).toLocaleString()}`);

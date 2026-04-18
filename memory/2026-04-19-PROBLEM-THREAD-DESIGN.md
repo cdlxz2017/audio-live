@@ -154,7 +154,81 @@ Thread：回答「这个问题从发现到解决的全过程」
 
 ---
 
-## 三、存储设计
+## 三、OpenClaw 连接方案
+
+### 3.1 整体架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  OpenClaw                                                    │
+│                                                              │
+│  problem-thread-plugin（OpenClaw 插件）                       │
+│    ├─ 监听 command:new/reset → 推送 session summary          │
+│    ├─ 监听 before_prompt_build → 注入 active threads          │
+│    └─ HTTP 调用 Problem Thread API                           │
+└────────────────────────────┬────────────────────────────────┘
+                             │ HTTP (localhost)
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Problem Thread API (Node.js/Express)                       │
+│    ├─ GET  /threads?status=active  → Session 启动时加载      │
+│    ├─ POST /sessions/:id/summary   → Session 结束时推送      │
+│    ├─ PATCH /threads/:id/stage    → 更新 Stage 内容          │
+│    └─ GET  /sessions/:id/threads  → 取某 session 的 Threads  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 3.2 OpenClaw 可用 Hook
+
+| Hook | 触发时机 | 用途 |
+|------|----------|------|
+| `command:new` / `command:reset` | 用户发 `/new` 或 `/reset` | Session 结束，提取并推送 summary |
+| `before_prompt_build` | 每次 prompt 构建前 | 注入 active threads；关联用户消息到 Thread |
+| `before_dispatch` | 每次消息发送前 | 捕获 senderId |
+
+### 3.3 Plugin 触发点设计
+
+| 时机 | Hook | 操作 |
+|------|------|------|
+| Session 启动 | `before_prompt_build`（首次） | 检测新 session → GET /threads?status=active → 注入 active threads |
+| Session 结束 | `command:new/reset` | 提取本次 session 摘要 → POST /sessions/:id/summary |
+| 用户消息 | `before_prompt_build` | 判断是否关联已有 Thread → 追加 analysis |
+| 发现错误/异常 | `before_prompt_build` | 提取错误关键词 → 关联 Thread → 追加 Stage 2 |
+
+### 3.4 API 端点设计
+
+```
+POST   /threads                          # 新建 Thread
+GET    /threads?status=active&limit=20   # 取活跃 Thread（session 启动时）
+GET    /threads/:id                      # 取单个 Thread
+PATCH  /threads/:id/stage               # 更新 Stage（追加 analysis/decision/implementation/verification）
+PATCH  /threads/:id/status               # 更新状态（in_progress/completed/blocked）
+POST   /sessions/:id/summary             # 推送 session summary，建立关联
+GET    /sessions/:id/threads            # 取某 session 关联的所有 Thread
+GET    /threads/:id/level1-5            # 递进加载（总览→摘要→对话→Neo4j→Graphify）
+```
+
+### 3.5 认证与安全
+
+- **无外部暴露**：Problem Thread API 只允许 localhost 访问
+- **无 API Key**：插件直连 localhost，不对外
+- **同机器通信**：Docker 网络内部通信
+
+### 3.6 迁移方式
+
+```bash
+# 打包
+tar -czf problem-thread-backup.tar.gz problem-thread/
+
+# 目标机器
+tar -xzf problem-thread-backup.tar.gz
+docker compose up -d
+openclaw plugins install problem-thread-plugin
+```
+
+---
+
+## 四、存储设计
 
 ### 3.1 核心实体：Thread（PostgreSQL）
 
@@ -276,7 +350,7 @@ session 结束时
 
 ---
 
-## 四、取出设计（Retrieval）
+## 五、取出设计（Retrieval）
 
 ### 4.1 触发的三个时间点
 
@@ -346,7 +420,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 五、为何以此方式设计
+## 六、为何以此方式设计
 
 ### 5.1 为什么以「问题」为主线？
 
@@ -366,7 +440,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 六、实现优先级
+## 七、实现优先级
 
 **Phase 1（最小闭环）**：
 - [ ] PostgreSQL：Thread 表结构 + JSONB Stage 字段
@@ -388,7 +462,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 七、何时触发存储写入
+## 八、何时触发存储写入
 
 | 操作 | 触发时机 | 写入内容 |
 |------|----------|----------|
@@ -402,7 +476,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 八、与其他文件的关系
+## 九、与其他文件的关系
 
 | 文件 | 内容 |
 |------|------|

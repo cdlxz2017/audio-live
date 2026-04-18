@@ -208,19 +208,52 @@ GET    /sessions/:id/threads            # 取某 session 关联的所有 Thread
 GET    /threads/:id/level1-5            # 递进加载（总览→摘要→对话→Neo4j→Graphify）
 ```
 
-### 3.5 认证与安全
+### 3.5 部署架构（方案 C — 独立 Docker Compose）
+
+```
+problem-thread/
+├── docker-compose.yml
+├── Dockerfile.api          # Node.js API 镜像
+├── config/
+│   └── api.env             # API 环境变量
+├── migrations/
+│   └── 001_create_tables.sql
+└── src/
+    └── api/
+```
+
+**Docker Compose 服务：**
+
+| 服务 | 镜像 | 端口 | 说明 |
+|------|------|------|------|
+| `pt-api` | Node.js (自定义) | 54321 | Problem Thread REST API |
+| `pt-postgres` | pgvector/pgvector:pg16 | 54320 | PostgreSQL（Thread 表 + pgvector）|
+| `pt-neo4j` | neo4j:5-community | 7688/7474 | Neo4j（Thread 关系图谱）|
+
+**端口约定：**
+- API：`localhost:54321`
+- PostgreSQL：`localhost:54320`
+（与现有 openclaw-postgres:5432 / openclaw-neo4j:7687 完全独立）
+
+**与 OpenClaw 的连接：**
+```yaml
+# OpenClaw 插件通过环境变量连接 API
+PROBLEM_THREAD_API_URL=http://localhost:54321
+```
+
+### 3.6 认证与安全
 
 - **无外部暴露**：Problem Thread API 只允许 localhost 访问
 - **无 API Key**：插件直连 localhost，不对外
 - **同机器通信**：Docker 网络内部通信
 
-### 3.6 迁移方式
+### 3.7 迁移方式
 
 ```bash
-# 打包
+# 当前机器打包
 tar -czf problem-thread-backup.tar.gz problem-thread/
 
-# 目标机器
+# 目标机器部署
 tar -xzf problem-thread-backup.tar.gz
 docker compose up -d
 openclaw plugins install problem-thread-plugin

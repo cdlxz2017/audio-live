@@ -261,7 +261,211 @@ openclaw plugins install problem-thread-plugin
 
 ---
 
-## 四、存储设计
+## 四、部署手册
+
+> 与实现同步编写，每完成一个步骤，手册对应章节同步更新。
+
+### 4.1 部署检查清单
+
+```
+[ ] 1. 创建目录结构
+[ ] 2. 编写 docker-compose.yml
+[ ] 3. 编写 Dockerfile.api
+[ ] 4. 编写数据库迁移脚本
+[ ] 5. 启动 Docker Compose
+[ ] 6. 验证数据库连接
+[ ] 7. 编写 API 源码
+[ ] 8. 编写 OpenClaw plugin
+[ ] 9. 安装 plugin
+[ ] 10. 验证插件加载
+[ ] 11. 测试 Session 启动/结束
+[ ] 12. 上线
+```
+
+### 4.2 目录结构
+
+```
+problem-thread/
+├── docker-compose.yml          # Docker 服务编排
+├── Dockerfile.api              # Node.js API 镜像构建
+├── config/
+│   └── api.env                # API 环境变量
+├── migrations/
+│   └── 001_create_tables.sql  # PostgreSQL 表结构
+├── src/
+│   ├── api/                   # API 服务源码
+│   └── plugin/                # OpenClaw 插件源码
+├── tests/
+│   └── api.test.js            # API 测试
+├── docs/
+│   └── DEPLOY.md              # 部署手册（本文件）
+└── README.md                  # 项目说明
+```
+
+### 4.3 环境要求
+
+- Docker + Docker Compose v2
+- Node.js ≥ 22（构建 API 镜像）
+- 端口要求：54320, 54321, 7688, 7474（均绑定 localhost）
+
+### 4.4 部署步骤（详细）
+
+#### Step 1: 创建目录结构
+
+```bash
+mkdir -p problem-thread/{config,migrations,src/{api,plugin},tests,docs}
+```
+
+#### Step 2: 编写 docker-compose.yml
+
+```yaml
+version: '3.9'
+services:
+  pt-api:
+    build: .
+    ports:
+      - "54321:54321"
+    environment:
+      - DATABASE_URL=postgresql://ptuser:ptpass@pt-postgres:5432/ptdb
+      - NEO4J_URI=bolt://pt-neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=ptneo4j2026
+    depends_on:
+      - pt-postgres
+      - pt-neo4j
+    restart: unless-stopped
+
+  pt-postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_DB=ptdb
+      - POSTGRES_USER=ptuser
+      - POSTGRES_PASSWORD=ptpass
+    ports:
+      - "54320:5432"
+    volumes:
+      - ./migrations/001_create_tables.sql:/docker-entrypoint-initdb.d/001_create_tables.sql
+      - pt-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  pt-neo4j:
+    image: neo4j:5-community
+    environment:
+      - NEO4J_AUTH=neo4j/ptneo4j2026
+    ports:
+      - "7688:7687"
+      - "7474:7474"
+    volumes:
+      - pt-neo4j-data:/data
+    restart: unless-stopped
+
+volumes:
+  pt-postgres-data:
+  pt-neo4j-data:
+```
+
+#### Step 3: 编写 Dockerfile.api
+
+```dockerfile
+FROM node:22-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
+COPY ./src/api ./src/api
+EXPOSE 54321
+CMD ["node", "src/api/index.js"]
+```
+
+#### Step 4: 编写数据库迁移脚本
+
+```sql
+-- migrations/001_create_tables.sql
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "vector";
+
+CREATE TABLE problem_threads (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title VARCHAR(500) NOT NULL,
+  domain VARCHAR(100)[],
+  status VARCHAR(20) DEFAULT 'new',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  sessions UUID[],
+  stage_problem JSONB,
+  stage_analysis JSONB,
+  stage_decision JSONB,
+  stage_implementation JSONB,
+  stage_verification JSONB
+);
+
+CREATE INDEX idx_problem_threads_status ON problem_threads(status);
+CREATE INDEX idx_problem_threads_updated ON problem_threads(updated_at DESC);
+CREATE INDEX idx_problem_threads_domain ON problem_threads USING GIN(domain);
+```
+
+#### Step 5: 启动 Docker Compose
+
+```bash
+cd problem-thread
+docker compose up -d
+
+# 验证服务启动
+docker compose ps
+# 预期：pt-api, pt-postgres, pt-neo4j 均为 Up 状态
+
+# 验证端口
+curl http://localhost:54321/health
+# 预期：{"status":"ok"}
+```
+
+#### Step 6: 验证数据库连接
+
+```bash
+# PostgreSQL 连接
+psql -h localhost -p 54320 -U ptuser -d ptdb -c "\dt"
+# 预期：problem_threads 表存在
+
+# Neo4j 连接
+curl - http://localhost:7474/browser/ -H "Content-Type: application/json" \
+  -d '{"username":"neo4j","password":"ptneo4j2026"}'
+# 预期：返回认证 token
+```
+
+#### Step 7-11: API 源码 → OpenClaw Plugin → 测试 → 上线
+
+（实现时同步更新本手册对应步骤）
+
+### 4.5 回滚步骤
+
+```bash
+# 停止服务（保留数据）
+docker compose stop
+
+# 完全销毁（含数据）
+docker compose down -v
+
+# 卸载 OpenClaw plugin
+openclaw plugins uninstall problem-thread-plugin
+
+# 清理工作目录
+rm -rf problem-thread/
+```
+
+### 4.6 验证检查点
+
+| 检查项 | 验证命令 | 预期结果 |
+|--------|----------|----------|
+| API 健康检查 | `curl http://localhost:54321/health` | `{"status":"ok"}` |
+| PostgreSQL 连接 | `psql -h localhost -p 54320 -U ptuser -d ptdb -c "SELECT 1"` | `?column? = 1` |
+| Neo4j 连接 | `curl http://localhost:7474` | Neo4j Browser UI 可访问 |
+| Plugin 加载 | `openclaw plugins list` | `problem-thread-plugin` 在列表中 |
+| Session 启动加载 | 启动新 session | 看到 active threads 输出 |
+| Session 结束推送 | `/new` | Thread 数据写入正常 |
+
+---
+
+## 五、存储设计
 
 ### 3.1 核心实体：Thread（PostgreSQL）
 
@@ -383,7 +587,7 @@ session 结束时
 
 ---
 
-## 五、取出设计（Retrieval）
+## 六、取出设计（Retrieval）
 
 ### 4.1 触发的三个时间点
 
@@ -453,7 +657,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 六、为何以此方式设计
+## 七、为何以此方式设计
 
 ### 5.1 为什么以「问题」为主线？
 
@@ -473,7 +677,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 七、实现优先级
+## 八、实现优先级
 
 **Phase 1（最小闭环）**：
 - [ ] PostgreSQL：Thread 表结构 + JSONB Stage 字段
@@ -495,7 +699,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 八、何时触发存储写入
+## 九、何时触发存储写入
 
 | 操作 | 触发时机 | 写入内容 |
 |------|----------|----------|
@@ -509,7 +713,7 @@ Level 5 — Graphify（代码知识）
 
 ---
 
-## 九、与其他文件的关系
+## 十、与其他文件的关系
 
 | 文件 | 内容 |
 |------|------|

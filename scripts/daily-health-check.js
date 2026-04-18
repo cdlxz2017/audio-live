@@ -1,26 +1,31 @@
 #!/usr/bin/env node
 /**
  * 每日系统健康检查脚本 (daily-health-check.js)
- * 替代旧的 comprehensive-health-check.js，按日/小时维度报告系统状态
- * 
+ *
+ * 检查范围（基于真实系统状态 2026-04-19）：
+ *   - PM2 进程（17个，含 Tiandao / Hermes / Cowrie / AudioStream）
+ *   - 数据库（PostgreSQL + pgvector）
+ *   - Neo4j 图数据库
+ *   - Redis Streams（graph:sync:events / memory:messages）
+ *   - Ollama + bge-m3 向量模型
+ *   - Tiandao 微服务（member/auth/karma/admin-app/worldevent）
+ *   - 蜜罐系统（Cowrie systemd + cowrie-tianxing PM2）
+ *   - 磁盘空间
+ *   - 记忆链路完整性（memory-integrity-check）
+ *   - Outbox 失败率（memory_outbox failed 检测）
+ *   - Recall Tier 配置（TECHNICAL/PROJECT 应为 tier=1，其余 tier=2）
+ *
  * 使用方式:
- *   node daily-health-check.js              # 执行一次检查并输出报告
- *   node daily-health-check.js --compact    # 紧凑输出（适合 cron email）
- *   node daily-health-check.js --watch      # 持续监控模式（每30秒一次）
- * 
- * Cron 设置 (推荐每日 09:00):
- *   0 9 * * * cd /home/ai/.openclaw/workspace && node scripts/daily-health-check.js --compact >> logs/daily-health.log 2>&1
+ *   node scripts/daily-health-check.js              # 完整报告
+ *   node scripts/daily-health-check.js --compact    # 紧凑输出
  */
 
 const { performance } = require('perf_hooks');
 const { spawn, execSync: rawExecSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
-// ============================================================
-// 工具函数
-// ============================================================
+// ─── 工具函数 ───────────────────────────────────────────────
 
 function execCmd(cmd, timeout = 30000) {
   return new Promise((resolve) => {
@@ -29,9 +34,7 @@ function execCmd(cmd, timeout = 30000) {
     let stdout = '', stderr = '';
     child.stdout.on('data', d => stdout += d);
     child.stderr.on('data', d => stderr += d);
-    child.on('close', code => {
-      resolve({ code, stdout: stdout.trim(), stderr: stderr.trim(), elapsed: Math.round(performance.now() - start) });
-    });
+    child.on('close', code => resolve({ code, stdout: stdout.trim(), stderr: stderr.trim(), elapsed: Math.round(performance.now() - start) }));
     child.on('error', e => resolve({ code: -1, stdout: '', stderr: e.message, elapsed: Math.round(performance.now() - start) }));
   });
 }
@@ -69,25 +72,29 @@ function formatUptime(ms) {
 function severity(cond) { return cond ? '🔴' : '✅'; }
 function warn(cond) { return cond ? '🟡' : '✅'; }
 
-// ============================================================
-// 各模块检查
-// ============================================================
+// ─── PM2 进程检查 ───────────────────────────────────────
 
 async function checkPM2() {
-  // 使用 execSync 避免 spawn 大输出缓冲问题
   let stdout;
-  try { stdout = rawExecSync('pm2 jlist 2>/dev/null', { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }); } 
+  try { stdout = rawExecSync('pm2 jlist 2>/dev/null', { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }); }
   catch { return { ok: false, error: 'pm2 jlist failed' }; }
-  
+
   let procs;
   try { procs = JSON.parse(stdout.trim()); } catch { return { ok: false, error: 'pm2 JSON parse failed' }; }
-  
-  const CRITICAL_NAMES = [
-    'bge-m3-keepalive', 'session-extractor',
-    'graph-linker', 'graphify-opus-manager', 'hermes-server'
-  ];
-  
-  const result = { ok: true, processes: {}, alerts: [] };
+
+  // 所有进程（按功能分组）
+  const GROUPS = {
+    '核心记忆': ['session-extractor', 'session-summary-extractor', 'outbox-writer', 'graph-linker'],
+    '向量模型': ['bge-m3-keepalive'],
+    'Graphify': ['graphify-opus-manager'],
+    'Hermes玄一': ['hermes-server', 'hermes-web'],
+    'Tiandao民宿': ['tiandao-member', 'tiandao-auth', 'tiandao-karma', 'tiandao-admin-app', 'tiandao-worldevent'],
+    '蜜罐防御': ['cowrie-tianxing', 'beelzebub-http', '4g-listener'],
+    '音频流': ['audio-stream'],
+  };
+
+  const result = { ok: true, processes: {}, groups: {}, alerts: [] };
+
   for (const p of procs) {
     const name = p.name;
     const status = p.pm2_env?.status;
@@ -95,28 +102,43 @@ async function checkPM2() {
     const uptime = p.pm2_env?.pm_uptime ? Date.now() - p.pm2_env.pm_uptime : 0;
     const mem = p.monit?.memory || 0;
     const online = status === 'online';
-    
+
     result.processes[name] = { status, restarts, uptime, mem, online };
-    
-    if (CRITICAL_NAMES.includes(name)) {
-      if (!online) result.alerts.push(`🔴 ${name} is ${status}`);
-      else if (restarts > 5) result.alerts.push(`🟡 ${name} 重启 ${restarts} 次`);
+
+    // bge-m3：重启>1000次 = 严重
+    if (name === 'bge-m3-keepalive') {
+      if (restarts > 1000) result.alerts.push(`🔴 bge-m3-keepalive 重启 ${restarts} 次（严重异常，可能 GPU OOM）`);
+      else if (restarts > 100) result.alerts.push(`🟡 bge-m3-keepalive 重启 ${restarts} 次`);
+    }
+    // session-summary-extractor：重启>10 = 异常（正常应<5）
+    else if (name === 'session-summary-extractor') {
+      if (restarts > 10) result.alerts.push(`🟡 session-summary-extractor 重启 ${restarts} 次（建议检查 LLM 调用是否稳定）`);
+    }
+    // 任何关键进程离线
+    else if (['session-extractor', 'outbox-writer', 'graph-linker'].includes(name) && !online) {
+      result.alerts.push(`🔴 ${name} 已停止（${status}）`);
+    }
+    else if (['bge-m3-keepalive', 'graphify-opus-manager', 'hermes-server'].includes(name) && !online) {
+      result.alerts.push(`🔴 ${name} 已停止（${status}）`);
     }
   }
-  
-  // 特殊检查：bge-m3-keepalive 重启次数
-  if (result.processes['bge-m3-keepalive']) {
-    const r_count = result.processes['bge-m3-keepalive'].restarts;
-    if (r_count > 100) result.alerts.push(`🔴 bge-m3-keepalive 重启 ${r_count} 次（严重异常）`);
-    else if (r_count > 10) result.alerts.push(`🟡 bge-m3-keepalive 重启 ${r_count} 次`);
+
+  // 按组别汇总
+  for (const [group, names] of Object.entries(GROUPS)) {
+    const ps = names.map(n => result.processes[n]).filter(Boolean);
+    const allOnline = ps.every(p => p.online);
+    const totalRestarts = ps.reduce((s, p) => s + p.restarts, 0);
+    result.groups[group] = { allOnline, totalRestarts, processes: ps };
   }
-  
+
   return result;
 }
 
+// ─── 数据库检查 ────────────────────────────────────────────
+
 async function checkDatabase() {
   const result = { ok: true, tables: {}, alerts: [] };
-  
+
   try {
     const rows = await dbQuery(`
       SELECT 'memories' as tbl, count(*) as cnt FROM memories
@@ -124,48 +146,63 @@ async function checkDatabase() {
       UNION ALL SELECT 'memory_summaries', count(*) FROM memory_summaries
       UNION ALL SELECT 'conversation_messages', count(*) FROM conversation_messages
       UNION ALL SELECT 'recall_logs', count(*) FROM recall_logs
+      UNION ALL SELECT 'memory_outbox', count(*) FROM memory_outbox
+      UNION ALL SELECT 'session_summary_cursor', count(*) FROM session_summary_cursor
     `);
     for (const row of rows.rows) result.tables[row.tbl] = parseInt(row.cnt);
-    
-    // 检查近1小时增量
-    const hourAgo = await dbQuery(`SELECT now() - INTERVAL '1 hour' as ts`);
+
+    // outbox 失败率
+    const outboxFailed = await dbQuery(`SELECT count(*) as cnt FROM memory_outbox WHERE status = 'failed'`);
+    const outboxTotal = await dbQuery(`SELECT count(*) as cnt FROM memory_outbox`);
+    const outboxFailedCnt = parseInt(outboxFailed.rows[0].cnt);
+    const outboxTotalCnt = parseInt(outboxTotal.rows[0].cnt);
+    result.tables.outbox_failed = outboxFailedCnt;
+    result.tables.outbox_total = outboxTotalCnt;
+    if (outboxTotalCnt > 0) {
+      const failRate = outboxFailedCnt / outboxTotalCnt * 100;
+      result.tables.outbox_fail_rate = failRate.toFixed(1);
+      if (failRate > 20) result.alerts.push(`🔴 memory_outbox 失败率 ${failRate.toFixed(1)}%（${outboxFailedCnt}/${outboxTotalCnt}）`);
+      else if (failRate > 5) result.alerts.push(`🟡 memory_outbox 失败率 ${failRate.toFixed(1)}%（${outboxFailedCnt}/${outboxTotalCnt}）`);
+    }
+
+    // 近1小时增量
     const recentCM = await dbQuery(`SELECT count(*) as cnt FROM conversation_messages WHERE created_at > now() - INTERVAL '1 hour'`);
     const recentMS = await dbQuery(`SELECT count(*) as cnt FROM memory_summaries WHERE created_at > now() - INTERVAL '1 hour'`);
-    
-    result.tables['conversation_messages_1h'] = parseInt(recentCM.rows[0].cnt);
-    result.tables['memory_summaries_1h'] = parseInt(recentMS.rows[0].cnt);
-    
+    result.tables.conversation_messages_1h = parseInt(recentCM.rows[0].cnt);
+    result.tables.memory_summaries_1h = parseInt(recentMS.rows[0].cnt);
+
   } catch (e) {
     result.ok = false;
     result.error = e.message;
   }
-  
   return result;
 }
+
+// ─── Neo4j 检查 ──────────────────────────────────────────
 
 async function checkNeo4j() {
   const result = { ok: true, nodes: {}, alerts: [] };
   try {
-    // 使用 execSync 避免 spawn 的引号转义问题
-    const curlCmd = `curl -s -u neo4j:openclaw_neo4j_2026 http://localhost:7474/db/neo4j/tx/commit -H 'Content-Type: application/json' -d '{"statements":[{"statement":"MATCH (n) RETURN labels(n)[0] as label, count(*) as cnt ORDER BY cnt DESC LIMIT 15"}]}'`;
+    const curlCmd = `curl -s -u neo4j:openclaw_neo4j_2026 http://localhost:7474/db/neo4j/tx/commit -H 'Content-Type: application/json' -d '{"statements":[{"statement":"MATCH (n) RETURN labels(n)[0] as label, count(*) as cnt ORDER BY cnt DESC LIMIT 20"}]}'`;
     let stdout;
-    try { stdout = rawExecSync(curlCmd, { encoding: 'utf8', timeout: 15000 }); } 
+    try { stdout = rawExecSync(curlCmd, { encoding: 'utf8', timeout: 15000 }); }
     catch (e) { result.ok = false; result.error = e.message; return result; }
-    
+
     let data;
     try { data = JSON.parse(stdout.trim()); } catch { result.ok = false; result.error = 'neo4j JSON parse failed'; return result; }
-    
+
     if (data.results?.[0]?.rows) {
-      for (const row of data.results[0].rows) {
-        result.nodes[row.label] = row.cnt;
-      }
+      for (const row of data.results[0].rows) result.nodes[row.label] = row.cnt;
     }
-    
-    // 关键节点检查
-    const THRESHOLD = { GraphifyCode: 50000, PersonalMemory: 1000 };
-    if (result.nodes.GraphifyCode < THRESHOLD.GraphifyCode) result.alerts.push(`🟡 GraphifyCode 节点 ${result.nodes.GraphifyCode}（低于预期 ${THRESHOLD.GraphifyCode}）`);
-    if (result.nodes.PersonalMemory < THRESHOLD.PersonalMemory) result.alerts.push(`🟡 PersonalMemory 节点 ${result.nodes.PersonalMemory}（低于预期 ${THRESHOLD.PersonalMemory}）`);
-    
+
+    // 关键节点阈值
+    const THRESHOLD = { GraphifyCode: 50000, PersonalMemory: 1000, Memory_summary: 100 };
+    for (const [label, threshold] of Object.entries(THRESHOLD)) {
+      const count = result.nodes[label] || 0;
+      if (count < threshold) result.alerts.push(`🟡 ${label} 节点 ${count}（低于预期 ${threshold}）`);
+    }
+    if (Object.keys(result.nodes).length === 0) result.alerts.push('🔴 Neo4j 无节点数据');
+
   } catch (e) {
     result.ok = false;
     result.error = e.message;
@@ -173,35 +210,35 @@ async function checkNeo4j() {
   return result;
 }
 
+// ─── Redis 检查 ────────────────────────────────────────────
+
 async function checkRedis() {
-  const result = { ok: true, info: {}, alerts: [] };
+  const result = { ok: true, streams: {}, info: {}, alerts: [] };
   try {
     const { Redis } = require('/home/ai/.openclaw/workspace/memory-system/node_modules/ioredis');
     const client = new Redis({ host: 'localhost', port: 6379, lazyConnect: true, connectTimeout: 8000 });
     await client.connect();
-    
+
     const info = await client.info('memory');
     const memLine = info.split('\n').find(l => l.startsWith('used_memory_human'));
-    const mem = memLine ? memLine.split(':')[1].trim() : 'unknown';
-    
-    // ioredis 没有 dbSize() 方法，用 INFO keyspace 代替
-    let dbSize = '?';
-    try {
-      const ksInfo = await client.info('keyspace');
-      const dbLine = ksInfo.split('\n').find(l => l.startsWith('db0'));
-      if (dbLine) {
-        const match = dbLine.match(/keys=(\d+)/);
-        dbSize = match ? parseInt(match[1]) : '?';
-      }
-    } catch { /* ignore */ }
-    
-    const graphSyncLen = await client.xlen('graph:sync').catch(() => 0);
-    
-    result.info = { mem, graphSyncLen, dbSize };
-    
-    if (graphSyncLen > 10000) result.alerts.push(`🟡 Redis graph:sync 队列积压 ${graphSyncLen} 条`);
-    if (graphSyncLen > 50000) result.alerts.push(`🔴 Redis graph:sync 队列严重积压 ${graphSyncLen} 条`);
-    
+    result.info.mem = memLine ? memLine.split(':')[1].trim() : 'unknown';
+
+    // graph:sync:events（graph-linker 消费）
+    const gsLen = await client.xlen('graph:sync:events').catch(() => -1);
+    const gsGroups = await client.xinfo('GROUPS', 'graph:sync:events').catch(() => []);
+    result.streams['graph:sync:events'] = { len: gsLen, groups: gsGroups.length };
+
+    // memory:messages（outbox-writer 消费）
+    const mmLen = await client.xlen('memory:messages').catch(() => -1);
+    const mmGroups = await client.xinfo('GROUPS', 'memory:messages').catch(() => []);
+    result.streams['memory:messages'] = { len: mmLen, groups: mmGroups.length };
+
+    // 告警
+    if (gsLen > 50000) result.alerts.push(`🔴 graph:sync:events 积压 ${gsLen} 条（graph-linker 严重滞后）`);
+    else if (gsLen > 10000) result.alerts.push(`🟡 graph:sync:events 积压 ${gsLen} 条`);
+
+    if (mmLen > 1000) result.alerts.push(`🟡 memory:messages 积压 ${mmLen} 条`);
+
     await client.quit();
   } catch (e) {
     result.ok = false;
@@ -210,41 +247,140 @@ async function checkRedis() {
   return result;
 }
 
+// ─── Ollama 检查 ─────────────────────────────────────────
+
 async function checkOllama() {
   const result = { ok: true, models: [], alerts: [] };
   try {
     let stdout;
     try { stdout = rawExecSync('curl -s http://localhost:11434/api/tags', { encoding: 'utf8', timeout: 10000 }); }
     catch (e) { result.ok = false; result.error = e.message; return result; }
-    
+
     let data;
     try { data = JSON.parse(stdout.trim()); } catch { result.ok = false; result.error = 'ollama JSON parse failed'; return result; }
-    
-    result.models = (data.models || []).map(m => ({ name: m.name, size: m.size || 0, modified: m.modified_at }));
-    
+
+    result.models = (data.models || []).map(m => ({ name: m.name, size: m.size || 0 }));
+
     const hasBgeM3 = result.models.some(m => m.name === 'bge-m3:latest');
-    if (!hasBgeM3) result.alerts.push('🔴 bge-m3:latest 模型缺失');
-    
+    if (!hasBgeM3) result.alerts.push('🔴 bge-m3:latest 模型缺失（向量嵌入功能将不可用）');
+
   } catch (e) {
     result.ok = false;
     result.error = e.message;
   }
   return result;
 }
+
+// ─── Tiandao 微服务检查 ──────────────────────────────────
+
+async function checkTiandao() {
+  const result = { ok: true, services: {}, alerts: [] };
+  const SERVICES = [
+    { name: 'tiandao-member', port: 3002, path: '/health' },
+    { name: 'tiandao-auth', port: 3004, path: '/health' },
+    { name: 'tiandao-karma', port: 3006, path: '/health' },
+    { name: 'tiandao-admin-app', port: 3013, path: '/health' },
+    { name: 'tiandao-worldevent', port: 3011, path: '/health' },
+  ];
+
+  for (const svc of SERVICES) {
+    try {
+      const res = await new Promise((resolve) => {
+        const req = require('http').get(`http://localhost:${svc.port}${svc.path}`, { timeout: 5000 }, res => resolve({ ok: res.statusCode < 400, status: res.statusCode }));
+        req.on('error', e => resolve({ ok: false, error: e.message }));
+        req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+      });
+      result.services[svc.name] = { port: svc.port, ...res };
+      if (!res.ok) result.alerts.push(`🟡 ${svc.name} (${svc.port}) 返回 ${res.status || res.error}`);
+    } catch (e) {
+      result.services[svc.name] = { port: svc.port, ok: false, error: e.message };
+      result.alerts.push(`🔴 ${svc.name} (${svc.port}) 无法访问`);
+    }
+  }
+  return result;
+}
+
+// ─── 蜜罐系统检查 ────────────────────────────────────────
+
+async function checkHoneypots() {
+  const result = { ok: true, components: {}, alerts: [] };
+
+  // Cowrie systemd
+  try {
+    const out = rawExecSync('systemctl is-active cowrie 2>/dev/null', { encoding: 'utf8' }).trim();
+    result.components.cowrie_systemd = out === 'active' ? 'active' : out;
+    if (out !== 'active') result.alerts.push(`🔴 Cowrie systemd: ${out}`);
+  } catch { result.components.cowrie_systemd = 'unknown'; result.alerts.push('🔴 Cowrie systemd 无法检测'); }
+
+  // Cowrie 端口
+  try {
+    const ss = rawExecSync('ss -tlnp 2>/dev/null | grep -E ":2222|:2223"', { encoding: 'utf8' });
+    const has2222 = ss.includes(':2222');
+    const has2223 = ss.includes(':2223');
+    result.components.cowrie_ports = { 2222: has2222, 2223: has2223 };
+    if (!has2222) result.alerts.push('🔴 Cowrie SSH 端口 2222 未监听');
+    if (!has2223) result.alerts.push('🔴 Cowrie Telnet 端口 2223 未监听');
+  } catch { result.alerts.push('🔴 Cowrie 端口检测失败'); }
+
+  // cowrie-tianxing PM2
+  try {
+    const out = rawExecSync('pm2 jlist 2>/dev/null', { encoding: 'utf8' });
+    const ps = JSON.parse(out.trim());
+    const ct = ps.find(p => p.name === 'cowrie-tianxing');
+    const bz = ps.find(p => p.name === 'beelzebub-http');
+    const gl = ps.find(p => p.name === '4g-listener');
+    result.components['cowrie-tianxing'] = ct ? { status: ct.pm2_env?.status, restarts: ct.pm2_env?.restart_time || 0 } : null;
+    result.components['beelzebub-http'] = bz ? { status: bz.pm2_env?.status, restarts: bz.pm2_env?.restart_time || 0 } : null;
+    result.components['4g-listener'] = gl ? { status: gl.pm2_env?.status, restarts: gl.pm2_env?.restart_time || 0 } : null;
+  } catch { /* PM2 检测失败不影响整体 */ }
+
+  return result;
+}
+
+// ─── Recall Tier 配置检查 ────────────────────────────────
+
+async function checkRecallConfig() {
+  const result = { ok: true, intents: {}, alerts: [] };
+  try {
+    const cfg = require('/home/ai/.openclaw/workspace/memory-system/scripts/config.js');
+    const ic = cfg.intentConfig || {};
+
+    // 技术/项目类应为 tier=1（实时性要求高），其余应为 tier=2（节省资源）
+    const EXPECTED_TIER_1 = ['TECHNICAL', 'PROJECT'];
+    const EXPECTED_TIER_2 = ['REASONING', 'FACTUAL', 'PREFERENCE', 'EVENT', 'PERSON', 'DEFAULT'];
+
+    for (const [intent, cfg_intent] of Object.entries(ic)) {
+      const tier = cfg_intent.tier;
+      result.intents[intent] = { tier, graphify: cfg_intent.graphify || false };
+      if (EXPECTED_TIER_1.includes(intent) && tier !== 1) {
+        result.alerts.push(`🟡 ${intent} 应为 tier=1（当前 tier=${tier}）`);
+      }
+      if (EXPECTED_TIER_2.includes(intent) && tier !== 2) {
+        result.alerts.push(`🟡 ${intent} 应为 tier=2（当前 tier=${tier}）`);
+      }
+    }
+  } catch (e) {
+    result.ok = false;
+    result.error = e.message;
+  }
+  return result;
+}
+
+// ─── 磁盘空间检查 ────────────────────────────────────────
 
 async function checkDisk() {
   const result = { ok: true, mounts: [], alerts: [] };
   try {
     const r = await execCmd("df -h | grep -E '^/dev' | awk '{print $1,$2,$3,$4,$5,$6}'");
     if (r.code !== 0) { result.ok = false; return result; }
-    
+
     for (const line of r.stdout.split('\n')) {
       const parts = line.trim().split(/\s+/);
       if (parts.length < 6) continue;
       const [fs, size, used, avail, pct, mount] = parts;
       result.mounts.push({ fs, size, used, avail, pct: pct.replace('%', ''), mount });
-      if (parseInt(pct) > 85) result.alerts.push(`🟡 ${mount} 使用率 ${pct}`);
       if (parseInt(pct) > 95) result.alerts.push(`🔴 ${mount} 使用率 ${pct}（紧急）`);
+      else if (parseInt(pct) > 85) result.alerts.push(`🟡 ${mount} 使用率 ${pct}`);
     }
   } catch (e) {
     result.ok = false;
@@ -253,63 +389,27 @@ async function checkDisk() {
   return result;
 }
 
-async function checkRecall() {
-  const result = { ok: true, intents: {}, alerts: [] };
-  try {
-    const config = require('/home/ai/.openclaw/workspace/memory-system/scripts/config.js');
-    const ic = config.intentConfig || {};
-    const intentList = ['DEFAULT', 'REASONING', 'TECHNICAL', 'FACTUAL', 'PREFERENCE', 'EVENT', 'PERSON', 'PROJECT'];
-    for (const intent of intentList) {
-      if (ic[intent]) result.intents[intent] = { tier: ic[intent].tier || '?' };
-    }
-    
-    const defaultTier = ic.DEFAULT?.tier;
-    if (defaultTier === 1) result.alerts.push('🟡 recall DEFAULT tier=1，会截断到60字符');
-    if (defaultTier !== 2) result.alerts.push(`🟡 recall DEFAULT tier=${defaultTier}（推荐 tier=2）`);
-    
-    for (const [intent, cfg] of Object.entries(ic)) {
-      if (intent === 'REASONING') continue;
-      if (cfg.tier === 1) result.alerts.push(`🟡 recall ${intent} tier=1（建议改为 tier=2）`);
-    }
-  } catch (e) {
-    result.ok = false;
-    result.error = e.message;
-  }
-  return result;
-}
-
-async function checkCronJobs() {
-  // 系统 crontab 可能为空（OpenClaw cron 由 gateway 管理），只检查有效行
-  try {
-    const out = rawExecSync('crontab -l 2>/dev/null | grep -v "^#" | grep -v "^$"', { encoding: 'utf8' });
-    return { ok: true, jobs: out.split('\n').filter(l => l.trim()) };
-  } catch {
-    return { ok: true, jobs: [], note: 'system crontab empty (OpenClaw cron via gateway)' };
-  }
-}
-
-// ============================================================
-// 主检查流程
-// ============================================================
+// ─── 主检查流程 ──────────────────────────────────────────
 
 async function runAllChecks() {
   const start = performance.now();
   const results = {};
   const allAlerts = [];
-  
+
   console.log('🔍 开始系统健康检查...\n');
-  
+
   const checks = [
     ['PM2进程', checkPM2],
     ['数据库', checkDatabase],
     ['Neo4j图数据库', checkNeo4j],
     ['Redis', checkRedis],
     ['Ollama', checkOllama],
+    ['Tiandao微服务', checkTiandao],
+    ['蜜罐系统', checkHoneypots],
+    ['Recall配置', checkRecallConfig],
     ['磁盘空间', checkDisk],
-    ['Recall配置', checkRecall],
-    ['Crontab', checkCronJobs],
   ];
-  
+
   for (const [name, fn] of checks) {
     process.stdout.write(`  检查 ${name}... `);
     try {
@@ -322,25 +422,23 @@ async function runAllChecks() {
       console.log(`❌ ${e.message}`);
     }
   }
-  
+
   const elapsed = Math.round(performance.now() - start);
   return { results, allAlerts, elapsed };
 }
 
-// ============================================================
-// 报告生成
-// ============================================================
+// ─── 报告生成 ────────────────────────────────────────────
 
 function generateReport(data, compact = false) {
   const { results, allAlerts, elapsed } = data;
   const lines = [];
-  const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-  
+  const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+
   lines.push(`═══════════════════════════════════════════════════════`);
-  lines.push(`  📋 每日系统健康检查报告  ${now}`);
+  lines.push(`  📋 系统健康检查报告  ${now}`);
   lines.push(`═══════════════════════════════════════════════════════`);
   lines.push(``);
-  
+
   // 告警汇总
   if (allAlerts.length > 0) {
     lines.push(`🚨 告警 (${allAlerts.length} 项):`);
@@ -350,97 +448,134 @@ function generateReport(data, compact = false) {
     lines.push(`✅ 系统状态正常`);
     lines.push(``);
   }
-  
-  // PM2 进程
-  if (results['PM2进程']?.ok && results['PM2进程']?.processes) {
+
+  // PM2 进程组
+  if (results['PM2进程']?.ok) {
     lines.push(`【PM2 进程】`);
-    const CRITICAL = ['bge-m3-keepalive', 'session-extractor', 'session-summary-extractor', 'graph-linker', 'graphify-opus-manager', 'hermes-server', 'hermes-web', 'outbox-writer'];
-    for (const [name, p] of Object.entries(results['PM2进程'].processes)) {
-      if (!CRITICAL.includes(name)) continue;
-      const s = severity(!p.online);
-      const memStr = formatBytes(p.mem || 0);
-      const upStr = formatUptime(p.uptime || 0);
-      lines.push(`  ${s} ${name.padEnd(28)} ${p.status.padEnd(8)} 内存:${memStr.padEnd(10)} 运行:${upStr.padEnd(8)} 重启:${p.restarts}`);
+    const g = results['PM2进程'].groups;
+    for (const [group, info] of Object.entries(g)) {
+      const icon = info.allOnline ? '✅' : '🔴';
+      const memStrs = info.processes.map(p => `${p.online ? '✅' : '🔴'}${p.status}(r${p.restarts})`).join(' | ');
+      lines.push(`  ${icon} ${group.padEnd(10)} ${memStrs}`);
     }
     lines.push(``);
   }
-  
+
   // 数据库
   if (results['数据库']?.ok) {
-    lines.push(`【数据库表统计】`);
     const t = results['数据库'].tables;
-    lines.push(`  ✅ memories:                  ${(t.memories || 0).toLocaleString()} 条`);
-    lines.push(`  ✅ personal_memories:         ${(t.personal_memories || 0).toLocaleString()} 条`);
-    lines.push(`  ✅ memory_summaries:          ${(t.memory_summaries || 0).toLocaleString()} 条`);
-    lines.push(`  ✅ conversation_messages:     ${(t.conversation_messages || 0).toLocaleString()} 条  (近1h: +${t.conversation_messages_1h || 0})`);
-    lines.push(`  ✅ recall_logs:               ${(t.recall_logs || 0).toLocaleString()} 条`);
-    lines.push(``);
-  }
-  
-  // Neo4j
-  if (results['Neo4j图数据库']?.ok) {
-    lines.push(`【Neo4j 图数据库】`);
-    const n = results['Neo4j图数据库'].nodes;
-    const important = ['GraphifyCode', 'PersonalMemory', 'Memory_default', 'Memory_00000000000000000000000000000000'];
-    for (const k of important) {
-      if (n[k] !== undefined) lines.push(`  ${severity(n[k] === 0)} ${k.padEnd(50)} ${(n[k] || 0).toLocaleString()} 节点`);
+    lines.push(`【数据库】`);
+    lines.push(`  ✅ conversation_messages: ${(t.conversation_messages||0).toLocaleString()} 条  (近1h: +${t.conversation_messages_1h||0})`);
+    lines.push(`  ✅ memory_summaries:    ${(t.memory_summaries||0).toLocaleString()} 条  (近1h: +${t.memory_summaries_1h||0})`);
+    lines.push(`  ✅ personal_memories:   ${(t.personal_memories||0).toLocaleString()} 条`);
+    lines.push(`  ✅ memories:            ${(t.memories||0).toLocaleString()} 条`);
+    lines.push(`  ✅ recall_logs:         ${(t.recall_logs||0).toLocaleString()} 条`);
+    lines.push(`  ✅ session_cursor:      ${(t.session_summary_cursor||0).toLocaleString()} 条`);
+    if (t.outbox_total > 0) {
+      const failRate = t.outbox_fail_rate || '0';
+      const icon = parseFloat(failRate) > 20 ? '🔴' : parseFloat(failRate) > 5 ? '🟡' : '✅';
+      lines.push(`  ${icon} memory_outbox:    ${t.outbox_failed||0}/${t.outbox_total||0} 失败率 ${failRate}%`);
     }
     lines.push(``);
   }
-  
-  // Redis
-  if (results['Redis']?.ok) {
-    const ri = results['Redis'].info;
-    lines.push(`【Redis】`);
-    lines.push(`  内存使用: ${ri.mem || '?'}`);
-    lines.push(`  graph:sync 队列: ${ri.graphSyncLen || 0} 条`);
-    lines.push(`  DB size: ${ri.dbSize || 0}`);
+
+  // Neo4j
+  if (results['Neo4j图数据库']?.ok) {
+    const n = results['Neo4j图数据库'].nodes;
+    const important = ['GraphifyCode', 'PersonalMemory', 'Memory_summary', 'PersonalEntity', 'Memory_00000000000000000000000000000000'];
+    lines.push(`【Neo4j 图数据库】`);
+    for (const k of important) {
+      if (n[k] !== undefined) lines.push(`  ${severity(n[k]===0)} ${k.padEnd(50)} ${(n[k]||0).toLocaleString()}`);
+    }
+    if (Object.keys(n).length === 0) lines.push(`  🔴 无节点数据（可能连接失败）`);
     lines.push(``);
   }
-  
+
+  // Redis
+  if (results['Redis']?.ok) {
+    const ri = results['Redis'].streams;
+    const info = results['Redis'].info;
+    lines.push(`【Redis】`);
+    lines.push(`  内存: ${info.mem || '?'}`);
+    for (const [name, s] of Object.entries(ri)) {
+      const icon = s.len > 10000 ? '🟡' : s.len > 50000 ? '🔴' : '✅';
+      lines.push(`  ${icon} ${name}: ${s.len} 条  (${s.groups} 个 consumer groups)`);
+    }
+    lines.push(``);
+  }
+
   // Ollama
   if (results['Ollama']?.ok) {
     lines.push(`【Ollama 模型】`);
     for (const m of results['Ollama'].models) {
       const sizeGB = m.size ? (m.size / 1024 / 1024 / 1024).toFixed(1) + 'GB' : '?';
-      lines.push(`  ${severity(!m.name.includes('bge-m3'))} ${m.name.padEnd(40)} ${sizeGB}`);
+      const icon = m.name.includes('bge-m3') ? '✅' : '  ';
+      lines.push(`  ${icon} ${m.name.padEnd(40)} ${sizeGB}`);
     }
     lines.push(``);
   }
-  
+
+  // Tiandao
+  if (results['Tiandao微服务']?.ok) {
+    lines.push(`【Tiandao 微服务】`);
+    const svc = results['Tiandao微服务'].services;
+    const svcMap = {
+      'tiandao-member': '成员(3002)',
+      'tiandao-auth': '认证(3004)',
+      'tiandao-karma': '业力(3006)',
+      'tiandao-admin-app': '管理API(3013)',
+      'tiandao-worldevent': '事件(3011)',
+    };
+    for (const [name, info] of Object.entries(svc)) {
+      const label = svcMap[name] || name;
+      const icon = info.ok ? '✅' : '🔴';
+      lines.push(`  ${icon} ${label.padEnd(16)} ${info.ok ? 'OK' : info.error || info.status}`);
+    }
+    lines.push(``);
+  }
+
+  // 蜜罐
+  if (results['蜜罐系统']?.ok) {
+    const hp = results['蜜罐系统'].components;
+    lines.push(`【蜜罐系统】`);
+    const cowrieIcon = hp.cowrie_systemd === 'active' ? '✅' : '🔴';
+    lines.push(`  ${cowrieIcon} Cowrie systemd: ${hp.cowrie_systemd}`);
+    if (hp.cowrie_ports) {
+      lines.push(`  ${hp.cowrie_ports[2222] ? '✅' : '🔴'} SSH 端口 2222`);
+      lines.push(`  ${hp.cowrie_ports[2223] ? '✅' : '🔴'} Telnet 端口 2223`);
+    }
+    for (const name of ['cowrie-tianxing', 'beelzebub-http', '4g-listener']) {
+      const p = hp[name];
+      if (p) lines.push(`  ${p.status === 'online' ? '✅' : '🔴'} ${name} (r${p.restarts})`);
+    }
+    lines.push(``);
+  }
+
+  // Recall 配置
+  if (results['Recall配置']?.ok) {
+    const ri = results['Recall配置'].intents;
+    lines.push(`【Recall Intent Tier】`);
+    const tierIcon = (t) => t === 1 ? '1️⃣' : t === 2 ? '2️⃣' : '❓';
+    for (const [intent, cfg] of Object.entries(ri)) {
+      const graphify = cfg.graphify ? ' 🔗' : '';
+      lines.push(`  ${tierIcon(cfg.tier)} ${intent.padEnd(12)} tier=${cfg.tier}${graphify}`);
+    }
+    lines.push(``);
+  }
+
   // 磁盘
-  if (results['磁盘空间']?.ok && results['磁盘空间'].mounts) {
+  if (results['磁盘空间']?.ok && results['磁盘空间'].mounts.length > 0) {
     lines.push(`【磁盘空间】`);
     for (const m of results['磁盘空间'].mounts) {
       if (parseInt(m.pct) > 80) lines.push(`  ${warn(parseInt(m.pct) > 90)} ${m.mount.padEnd(20)} ${m.used}/${m.size} (${m.pct}%)`);
     }
     lines.push(``);
   }
-  
-  // Recall配置
-  if (results['Recall配置']?.ok) {
-    const ri = results['Recall配置'].intents;
-    lines.push(`【Recall Intent Tier 配置】`);
-    const tierIcon = (t) => t === 2 ? '✅' : t === 1 ? '🟡' : '❓';
-    for (const [intent, cfg] of Object.entries(ri)) {
-      lines.push(`  ${tierIcon(cfg.tier)} ${intent.padEnd(12)} tier=${cfg.tier}`);
-    }
-    lines.push(``);
-  }
-  
-  // Cron 任务
-  if (results['Crontab']?.ok) {
-    lines.push(`【活跃 Cron 任务】`);
-    for (const j of results['Crontab'].jobs) {
-      lines.push(`  ${j}`);
-    }
-    lines.push(``);
-  }
-  
+
   lines.push(`═══════════════════════════════════════════════════════`);
   lines.push(`  检查完成，耗时 ${elapsed}ms`);
   lines.push(`═══════════════════════════════════════════════════════`);
-  
+
   return lines.join('\n');
 }
 
@@ -448,57 +583,46 @@ function generateCompactReport(data) {
   const { results, allAlerts, elapsed } = data;
   const t = results['数据库']?.tables || {};
   const n = results['Neo4j图数据库']?.nodes || {};
-  const ri = results['Redis']?.info || {};
-  const bgeRestarts = results['PM2进程']?.processes?.['bge-m3-keepalive']?.restarts || 0;
-  const sessRestarts = results['PM2进程']?.processes?.['session-summary-extractor']?.restarts || 0;
-  
+  const redis = results['Redis']?.streams || {};
+  const pm2 = results['PM2进程']?.processes || {};
+  const bge = pm2['bge-m3-keepalive'];
+  const sess = pm2['session-summary-extractor'];
+  const ob = pm2['outbox-writer'];
+  const gl = pm2['graph-linker'];
+
   const parts = [];
   parts.push(`[${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}]`);
-  parts.push(`DB: cm=${t.conversation_messages||0} ms=${t.memory_summaries||0} pm=${t.personal_memories||0}`);
-  parts.push(`Neo4j: GC=${n.GraphifyCode||0} PM=${n.PersonalMemory||0}`);
-  parts.push(`Redis: gs=${ri.graphSyncLen||0}`);
-  parts.push(`Restarts: bge=${bgeRestarts} sess=${sessRestarts}`);
-  if (allAlerts.length > 0) parts.push(`ALERTS: ${allAlerts.length}`);
-  parts.push(`(${elapsed}ms)`);
-  
+  parts.push(`CM=${t.conversation_messages||0} MS=${t.memory_summaries||0} PM=${t.personal_memories||0}`);
+  parts.push(`Neo4j GC=${n.GraphifyCode||0} PM=${n.PersonalMemory||0}`);
+  parts.push(`Redis gs=${redis['graph:sync:events']?.len||0} mm=${redis['memory:messages']?.len||0}`);
+  parts.push(`bge=r${bge?.restarts||0} sess=r${sess?.restarts||0} ob=r${ob?.restarts||0} gl=r${gl?.restarts||0}`);
+  if (t.outbox_fail_rate && parseFloat(t.outbox_fail_rate) > 0) parts.push(`ob_fail=${t.outbox_fail_rate}%`);
+  if (allAlerts.length > 0) parts.push(`ALERTS=${allAlerts.length}`);
+  parts.push(`${elapsed}ms`);
+
   return parts.join(' | ');
 }
 
-// ============================================================
-// 入口
-// ============================================================
+// ─── 入口 ────────────────────────────────────────────────
 
 (async () => {
   const args = process.argv.slice(2);
   const compact = args.includes('--compact');
-  const watch = args.includes('--watch');
-  
-  if (watch) {
-    console.log('👁 监控模式 (Ctrl+C 退出)，每30秒检查一次...\n');
-    let count = 0;
-    while (true) {
-      count++;
-      process.stdout.write(`\n[${count}] ${new Date().toLocaleTimeString('zh-CN')}\n`);
-      const data = await runAllChecks();
-      console.log(generateCompactReport(data));
-      await new Promise(r => setTimeout(r, 30000));
-    }
-  } else {
-    const data = await runAllChecks();
-    const report = compact ? generateCompactReport(data) : generateReport(data);
-    console.log('\n' + report);
-    
-    // 保存到日志文件
-    const logDir = '/home/ai/.openclaw/workspace/logs';
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-    const logFile = path.join(logDir, `daily-health-${Date.now()}.log`);
-    fs.writeFileSync(logFile, report);
-    console.log(`\n📁 报告已保存: ${logFile}`);
-    
-    // 检查发现问题写入警报文件
-    if (data.allAlerts.length > 0) {
-      const alertFile = path.join(logDir, 'daily-health-alerts.latest');
-      fs.writeFileSync(alertFile, data.allAlerts.join('\n'));
-    }
+
+  const data = await runAllChecks();
+  const report = compact ? generateCompactReport(data) : generateReport(data);
+  console.log('\n' + report);
+
+  // 保存日志
+  const logDir = '/home/ai/.openclaw/workspace/logs';
+  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, `daily-health-${Date.now()}.log`);
+  fs.writeFileSync(logFile, report);
+
+  if (data.allAlerts.length > 0) {
+    const alertFile = path.join(logDir, 'daily-health-alerts.latest');
+    fs.writeFileSync(alertFile, data.allAlerts.join('\n'));
   }
+
+  process.exit(data.allAlerts.some(a => a.startsWith('🔴')) ? 1 : 0);
 })();

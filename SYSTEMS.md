@@ -401,18 +401,21 @@ proactive: {
 - **逻辑**：
   ```
   IF 最近30分钟有对话消息:
-      IF 最近30分钟有新摘要: ✅ 正常 → 静默
-      ELSE: ❌ 异常 → 通知（extractor 可能卡了）
+      IF L2 有新摘要: ✅ 正常 → 静默
+      ELSE: ❌ 异常 → 通知（extractor 卡了）
   ELSE:
       💤 没事 → 静默（没对话本来就不该有摘要）
   ```
-- **检测项**：
-  | 检测项 | 说明 |
-  |--------|------|
-  | 对话消息量 | conversation_messages 近30分钟新增 |
-  | 摘要生成量 | memory_summaries 近30分钟新增 |
-  | extractor进程 | session-summary-extractor 是否在线 |
-  | 积压率 | 对话多但摘要少（>10条对话且比率<10%）|
+- **检测项（完整六层链路）**：
+  | 层 | 检测项 | 说明 |
+  |---|--------|------|
+  | L1 | conversation_messages | 原始对话新增 |
+  | L2 | memory_summaries | Session摘要新增 |
+  | L3 | personal_memories | 个人记忆新增（outbox-writer）|
+  | L4 | recall_logs | 实际召回记录 |
+  | L5 | Redis graph:sync:events | 队列积压（>50000告警）|
+  | L6 | Neo4j PersonalMemory | 节点数量 |
+  | 进程 | extractor/outbox/graph-linker | PM2进程状态 |
 - **调度**：每30分钟自动执行（cron job）
 - **告警**：仅在「有对话但无摘要」或「进程停止」时触发
 - **状态**：✅ 已部署

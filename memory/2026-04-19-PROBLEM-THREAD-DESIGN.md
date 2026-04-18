@@ -156,25 +156,53 @@ Thread：回答「这个问题从发现到解决的全过程」
 
 ## 三、OpenClaw 连接方案
 
-### 3.1 整体架构
+### 3.1 双脑架构定位
+
+```
+OpenClaw（大脑）
+    │
+    ├── memory-recall-plugin（主脑 — 现有系统）
+    │    → 每次 before_prompt_build 触发
+    │    → 通用语义召回（summaries / memories / personal_memories）
+    │    → 连接：openclaw-postgres + openclaw-neo4j
+    │
+    └── problem-thread-plugin（副脑 — 新建系统）
+         → command:new/reset + 首次 before_prompt_build 触发
+         → 问题链追踪与跨 session 连续性
+         → 连接：pt-postgres + pt-neo4j
+```
+
+**两套系统互补，不争抢，不侵入：**
+
+| | 主脑（现有记忆系统） | 副脑（Problem Thread） |
+|---|---|---|
+| 职责 | 通用记忆召回 | 问题追踪与连续性 |
+| 数据 | summaries / memories / personal_memories | problem_threads |
+| 数据库 | openclaw-postgres / openclaw-neo4j | pt-postgres / pt-neo4j |
+| 触发 | 每次 before_prompt_build | session 边界 |
+| 目标 | 当前对话需要什么 | 我们做过什么、正在做什么 |
+
+### 3.2 整体架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  OpenClaw                                                    │
 │                                                              │
-│  problem-thread-plugin（OpenClaw 插件）                       │
+│  memory-recall-plugin（主脑）                                 │
+│    └─ before_prompt_build → 注入通用召回记忆                  │
+│                                                              │
+│  problem-thread-plugin（副脑）                                │
 │    ├─ 监听 command:new/reset → 推送 session summary          │
-│    ├─ 监听 before_prompt_build → 注入 active threads          │
-│    └─ HTTP 调用 Problem Thread API                           │
+│    └─ 监听 before_prompt_build → 注入 active threads          │
 └────────────────────────────┬────────────────────────────────┘
                              │ HTTP (localhost)
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Problem Thread API (Node.js/Express)                       │
 │    ├─ GET  /threads?status=active  → Session 启动时加载      │
-│    ├─ POST /sessions/:id/summary   → Session 结束时推送      │
+│    ├─ POST /sessions/:id/summary   → Session 结束时推送       │
 │    ├─ PATCH /threads/:id/stage    → 更新 Stage 内容          │
-│    └─ GET  /sessions/:id/threads  → 取某 session 的 Threads  │
+│    └─ GET  /sessions/:id/threads  → 取某 session 的 Threads   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

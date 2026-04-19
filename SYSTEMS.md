@@ -481,6 +481,51 @@ proactive: {
 
 ---
 
+### 中央凭证管理系统（Centralized API Key Management）
+- **触发词**：API Key管理、凭证管理、统一密钥、API管理
+- **目的**：所有敏感凭证集中管理，消除硬编码，支持安全轮换
+- **档案**：`memory/API-KEY-MANAGEMENT.md`
+
+**目录结构**：
+```
+~/.openclaw/credentials/
+├── database.env      # PostgreSQL / Neo4j 密码
+├── api-keys.env      # DeepSeek / MiniMax / Brave / DashScope
+├── qqmail.env        # QQ 邮箱凭证
+├── loader.js         # Node.js 读取器
+├── loader.py         # Python 读取器
+└── README.md
+```
+
+**接入组件**：
+| 组件 | 状态 | 读取方式 |
+|------|------|---------|
+| memory-system/config.js | ✅ 已接入 | 中央凭证 fallback |
+| active-researcher.js | ✅ 已接入 | 中央凭证优先 |
+| session-summary-now.js | ✅ 已接入 | 中央凭证 fallback |
+| send-email.py | ✅ 已接入 | 中央凭证优先 |
+| receive-email.py | ✅ 已接入 | 中央凭证优先 |
+
+**读取优先级**（永不断裂）：
+```
+process.env  >  中央凭证文件  >  fallback值
+```
+
+**安全措施**：
+- 目录权限：chmod 700（仅本人可读）
+- 文件权限：chmod 600（仅本人可读写）
+- 不提交 git（.gitignore 已在 workspace 配置）
+- openclaw.json 权限：chmod 600
+
+**Git 提交记录**：
+- memory-system 子仓库：commit 92772bc（Phase 3）
+- memory-system 子仓库：commit 05276c8（Phase 0-1）
+- workspace 主仓库：commit 3c2ff15（方案报告）
+
+**状态**：✅ Phase 0-5 全部完成（2026-04-20）
+
+---
+
 ### 技术知识库（Tech Knowledge）
 - **触发词**：技术知识、tech-knowledge、查技术文档
 - **使用**：告诉我要查什么技术主题，自动从知识库检索

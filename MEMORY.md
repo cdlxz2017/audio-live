@@ -4,9 +4,85 @@
 
 ---
 
+## ⚡ 卓越架构模式（永久生效）
+
+**规则**：主人下达的任何任务，默认必须使用「卓越架构模式」执行，除非是直接命令（查数据/发文件/简单操作）。
+
+**卓越架构模式 =**：
+1. **已知** → 查历史方案，复用已有经验
+2. **未知** → 多方案对比，动手前识别危险点
+3. **读手册** → 动手前读技术文档，理解系统架构
+4. **文档闭环** → 完成后更新文档，沉淀经验
+
+**详细 SOP**：`capability-graph/SOP-EXCELLENCE-FRAMEWORK.md`（v2.1）
+
+**判断标准**：
+- ✅ 需要思考、规划、设计、调研、对比 → **必须走卓越架构**
+- ✅ 主人问「你怎么看」「方案是什么」「帮我研究」 → **必须走卓越架构**
+- ⚡ 主人说「查一下XX」「发个文件」「重启XX」 → **直接执行，不走**
+
+---
+
 ## 🏷️ 系统触发词
 
 **触发条件**：主人说「系统」「调用系统」「触发系统」「所有系统」「系统清单」时，立即读取 `workspace/SYSTEMS.md` 并完整输出。
+
+---
+
+## 🗺️ 能力索引总表（session 启动加载）
+
+> 主人说一句话，我查下表就知道该读哪个文件。不需要记路径，自然语言说就行。
+
+### 系统（读 `capability-graph/systems/`）
+
+| 关键词 | 文件 | 说明 |
+|--------|------|------|
+| gateway/网关 | `openclaw-gateway.md` | OpenClaw 网关，端口 18789 |
+| 主脑/记忆系统 | `memory-system.md` | 三层记忆 + Neo4j 同步 |
+| 副脑/problem thread | `problem-thread.md` | 问题追踪系统，API 54321 |
+| 安全/防火墙 | `security-system.md` | OSSEC + fail2ban + UFW |
+| 民宿/lingyi | `lingyi-cms.md` | 靈一民宿系统，Docker 部署 |
+| 天道系统 | `tiandao-system.md` | 天道微服务，PM2 管理 |
+| Neo4j/图数据库 | `neo4j.md` | 170万+ 节点，主脑+副脑 |
+
+### 工具（读 `capability-graph/tools/`）
+
+| 关键词 | 文件 | 说明 |
+|--------|------|------|
+| clawteam/团队/多人协作 | `clawteam.md` | 多智能体协同，tmux+git |
+| 数据库/PostgreSQL/pg | `postgresql.md` | 主库 + 副脑库 |
+| PM2/进程 | `pm2.md` | Node.js 进程管理 |
+| 模型/LLM/路由 | `llm-routing.md` | 大模型可用性与路由策略 |
+| Redis/缓存 | `redis.md` | 缓存 + graph:sync:events Stream |
+| Docker/容器 | `docker.md` | 容器运行时，lingyi/副脑 |
+| **凭证/API Key** | `memory/API-KEY-MANAGEMENT.md` | 中央凭证管理系统（Phase 0-5完成） |
+
+### 技能（读 `capability-graph/skills/`）
+
+| 关键词 | 文件 | 说明 |
+|--------|------|------|
+| 邮件/email | `skills/custom/send-email.md` | QQ邮箱收发，天道AI落款 |
+| 语音/TTS/ASR | `skills/custom/voice-tools.md` | 有道TTS + 阿里云Fun-ASR |
+| 摄像头/录制 | `skills/custom/camera-recorder.md` | 视频录制+转写+发邮件 |
+| 记忆追溯/摘要查找 | `skills/custom/three-layer-memory-lookup.md` | 三层记忆追溯 |
+| 追溯链/trace_chain | `memory-system/scripts/trace-chain-audit.js` | 端到端写入验证（2026-04-20） |
+| 自学习记忆引擎 | `memory-system/scripts/learning-engine-monitor.js` | 四条数据链监控（2026-04-20） |
+| Hermes/玄一 | `skills/custom/hermes-router.md` | 复杂任务路由 |
+| 技术知识库 | `skills/custom/tech-knowledge.md` | 21文档向量检索 |
+| graph-linker监控 | `skills/custom/graph-linker-monitor.md` | Stream积压分析 |
+| 其他自制 | `skills/custom/other-custom.md` | audio-stream/graphify/task-router（开发中） |
+| 工作区skill | `skills/workspace/workspace-skills.md` | defuddle/json-canvas/obsidian等7个 |
+| 系统skill | `skills/builtin/builtin-index.md` | 53个系统自带skill索引 |
+
+### 框架/风险/避坑
+
+| 关键词 | 文件 | 说明 |
+|--------|------|------|
+| SOP/卓越框架 | `frameworks/excellence-sop.md` | 三级通道 + 团队模式 |
+| 危险点/风险 | `risk-patterns/model-unavailability.md` | 模型不可用/Session中断/hook缺陷 |
+| 避坑/教训 | `pitfalls/design-lessons.md` | 4条设计教训 |
+| 完整SOP | `SOP-EXCELLENCE-FRAMEWORK.md` | SOP v2.1 完整文件 |
+| **总导航仪表盘** | `capability-graph/NAVIGATION.md` | 主人可随时查看的全景状态报告 |
 
 ---
 
@@ -166,16 +242,17 @@
 **阶段**：已部署运行
 **检测脚本**：`memory-system/scripts/health-check.js`（只检查4个在运行的 PM2 进程）
 
-### 数据流（2026-04-09 确认）
+### 数据流（2026-04-18 修正）
 
 ```
 对话消息 → OpenClaw Gateway
               ├─→ hook: session-capture-hook → PostgreSQL conversation_messages ✅
+              │    ⚠️ 只捕获 user 消息（before_message_write 对 assistant 无效）
               │                                      ↓
               │                           30秒轮询: session-file-extractor-loop.js (PM2 #0)
+              │                           --no-llm 跳过LLM提取，只做归档
               │                                      ↓
-              │                           extractor-file-based.js
-              │                           └─→ memories (LLM提取) ✅ 正常
+              │                           extractor-file-based.js → A表 ✅
               │
               ├─→ summary-extractor (PM2 #2) → memory_summaries (实时产出)
               │                                      ↓
@@ -187,9 +264,16 @@
               │
               └─→ graph-linker.js (PM2 #1) → Redis Stream: graph:sync:events → Neo4j ✅
 
-personal_memories: 3927条 (4月3日后停止写入，用于 backfill 回填)
-memory_summaries: 318条+ (4月9日起 summary-extractor 实时产出)
-Neo4j PersonalMemory: 927节点, 318有content (2026-04-09 20:06)
+**A表记录（2026-04-18）:**
+- conversation_messages: user=5341, assistant=1213
+- 主session (121b7b7c): user=3496, assistant=460
+- 记忆摘要: 1745条
+- recall_logs: 393条
+
+**已知问题:**
+- before_message_write hook 对 webchat assistant 无效（SessionManager.appendInjectedAssistantMessageToTranscript 绕过了hook）
+- assistant 消息完全依赖 extractor 从 JSONL 文件读取（batch，有30s延迟）
+- 详见: memory-system/docs/SESSION-CAPTURE-ANALYSIS-2026-04-18.md
 ```
 
 ### Graphify 实体对齐 + 查询路由（2026-04-09 完成）
@@ -238,7 +322,7 @@ Neo4j PersonalMemory: 927节点, 318有content (2026-04-09 20:06)
 | 表 | 数量 | 说明 |
 |----|------|------|
 | `memories` | 1705 条 | 结构化记忆（entity/attr/value），来自文件扫描路径 |
-| `personal_memories` | 3927 条 | 原始内容记忆（4月3日后停止写入）|
+| `personal_memories` | 36,772 条 | 原始内容记忆（dialogue占32689条来自session提取，其余各类技术/决策/事件等）|
 | `memory_summaries` | 318 条+ | summary-extractor 实时产出（4月9日起）|
 | `conversation_messages` | 1593 条 | 原始对话存档 |
 | `recall_logs` | 21 条 | 召回历史 |
@@ -568,5 +652,26 @@ DANGEROUS_PATTERNS 检测：rm -rf、DROP TABLE、shutdown 等危险命令拦截
 
 ---
 
-_最后更新：2026-04-12 02:25_
+## ⚠️ 铁律（绝对禁止）
+
+### bge-m3:latest 永久驻留内存 — 禁止任何操作
+
+**规则**：`bge-m3:latest` 模型文件、Ollama 配置、PM2 保活进程，**严禁任何删除、移动、重装、修改操作**。
+
+**当前配置**：
+- PM2 进程：`bge-m3-keepalive`（ID 19），每 30 秒调用一次 `keep_alive: -1`
+- 脚本路径：`/home/ai/.openclaw/workspace/scripts/keepalive-bge-m3.js`
+- 触发方式：`Ollama POST /api/embeddings`，参数 `keep_alive: -1`
+- Crontab：**已移除**（改用 PM2 持久进程）
+
+**绝对禁止**：
+- ❌ 删除 `keepalive-bge-m3.js`
+- ❌ 删除 `bge-m3-keepalive` PM2 进程
+- ❌ `ollama rm bge-m3:latest`
+- ❌ 修改 `keep_alive` 参数为其他值
+- ❌ 重启后不重新启动保活进程
+
+**违反视为最高级事故，立即恢复。**
+
+_最后更新：2026-04-18 10:08_
 

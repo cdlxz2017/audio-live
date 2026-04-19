@@ -37,7 +37,29 @@ Skills are shared. Your setup is yours. Keeping them apart means you can update 
 
 ---
 
-Add whatever helps you do your job. This is your cheat sheet.
+---
+
+## 凭证管理（2026-04-20 新增）
+
+所有敏感凭证集中在 `~/.openclaw/credentials/` 管理，不再散落各处。
+
+| 文件 | 内容 |
+|------|------|
+| `database.env` | PostgreSQL / Neo4j 密码 |
+| `api-keys.env` | DeepSeek / MiniMax / Brave / DashScope API Keys |
+| `qqmail.env` | QQ 邮箱凭证 |
+| `loader.js` | Node.js 中央读取器 |
+| `loader.py` | Python 中央读取器 |
+
+**使用方式**：
+```javascript
+const { getApiKey, getDbPassword } = require('~/.openclaw/credentials/loader');
+const key = getApiKey('deepseek');
+```
+
+**读取优先级**：`process.env` > `credentials/*.env` > `fallback`
+
+详情：`memory/API-KEY-MANAGEMENT.md`
 
 ---
 

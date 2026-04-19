@@ -56,6 +56,7 @@
 | Redis/缓存 | `redis.md` | 缓存 + graph:sync:events Stream |
 | Docker/容器 | `docker.md` | 容器运行时，lingyi/副脑 |
 | **凭证/API Key** | `memory/API-KEY-MANAGEMENT.md` | 中央凭证管理系统（Phase 0-5完成） |
+| **操作审计系统** | `memory/AUDIT-SYSTEM-DESIGN.md` | 审计日志（Phase 1 实施中） |
 
 ### 技能（读 `capability-graph/skills/`）
 
@@ -66,6 +67,7 @@
 | 摄像头/录制 | `skills/custom/camera-recorder.md` | 视频录制+转写+发邮件 |
 | 记忆追溯/摘要查找 | `skills/custom/three-layer-memory-lookup.md` | 三层记忆追溯 |
 | 追溯链/trace_chain | `memory-system/scripts/trace-chain-audit.js` | 端到端写入验证（2026-04-20） |
+| 召回实时监控 | `memory-system/scripts/recall-live-monitor.js` | 召回延迟/意图/P99实时监控（2026-04-20） |
 | 自学习记忆引擎 | `memory-system/scripts/learning-engine-monitor.js` | 四条数据链监控（2026-04-20） |
 | Hermes/玄一 | `skills/custom/hermes-router.md` | 复杂任务路由 |
 | 技术知识库 | `skills/custom/tech-knowledge.md` | 21文档向量检索 |

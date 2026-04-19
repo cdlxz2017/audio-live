@@ -221,6 +221,28 @@ buildMemoryPrompt() → prependContext 注入 LLM
 | PERSON | ❌ | 1 | 4h |
 | DEFAULT | ❌ | 1 | 2h |
 
+**实时监控（v1.0 — 2026-04-20）**：
+```bash
+# 每5分钟采集一次
+node memory-system/scripts/recall-live-monitor.js
+
+# 带告警模式（异常则exit 1）
+node memory-system/scripts/recall-live-monitor.js --alert
+```
+
+**监控指标**：
+- 5分钟窗口调用量
+- 延迟 P50/P90/P95/P99
+- 意图分布 / 来源分布
+- 无结果召回率
+
+**Cron**：`*/5 * * * *`（每5分钟，已加入 crontab）
+
+**已知问题修复（2026-04-20）**：
+- ✅ Graphify 对齐 bug：`extractAlignedIds()` 改用 `alignedMemories[].id`（不再用 `node.id`）
+- ✅ TECHNICAL 正则关键词扩充（+18个技术词汇）
+- ✅ Redis 缓存工作正常（TTL 5分钟，hit 时输出 Cache HIT）
+
 **级联召回配置**：
 
 ```javascript
@@ -815,6 +837,12 @@ bash /home/ai/.openclaw/workspace/scripts/security-check.sh
 - **规则**：记忆系统问题 → 必须用 Claude Opus 4-6 子程序处理
 - **重试**：失败立即重试，最多3次；3次失败后报告主人
 - **路径**：`SOP-MEMORY-SYSTEM.md`
+
+### 文档更新 SOP（强制）
+- **触发词**：更新文档、更新手册、文档规范
+- **规则**：任何代码/配置/架构变更后，必须走此 SOP 检查文档同步
+- **检查清单**：SYSTEMS.md → MEMORY.md → 今日日记 → TOOLS.md → 项目文档 → Git提交
+- **路径**：`SOP-DOCUMENTATION-UPDATE.md`
 
 ### 邮件收发 SOP
 - **触发词**：发邮件、发送邮件、测试邮件

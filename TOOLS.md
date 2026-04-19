@@ -141,3 +141,21 @@ node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
 - 文档: `memory-system/docs/RECALL-DESIGN.md`
 - Git: `f653af4 feat: 记忆召回系统 Week1+2 升级`
 - recall_logs bug 已修复 (user_id NOT NULL / 空vector)
+
+## 审计系统工具 (2026-04-20)
+
+| 工具 | 路径 | 说明 |
+|------|------|------|
+| append-audit.js | `audit-scripts/append-audit.js` | 核心写入模块（append-only + 批量合并） |
+| audit-redact.js | `audit-scripts/audit-redact.js` | 敏感信息脱敏 |
+| audit-query.js | `audit-scripts/audit-query.js` | CLI查询工具 |
+| audit-monitor.js | `audit-scripts/audit-monitor.js` | 健康监控 |
+
+**常用命令**：
+```bash
+node audit-scripts/audit-query.js --stats                    # 今日统计
+node audit-scripts/audit-query.js --category DATABASE       # 按类别查
+node audit-scripts/audit-monitor.js                         # 监控检查
+```
+
+**存储位置**：`/home/ai/.openclaw/audit/YYYY-MM-DD.jsonl`（权限 600）

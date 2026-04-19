@@ -258,16 +258,16 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **4296** | 原始对话存档 |
-| memory_summaries | **1872** | 摘要（v4.5+ Session级）|
+| conversation_messages | **4337** | 原始对话存档 |
+| memory_summaries | **1873** | 摘要（v4.5+ Session级）|
 | memories | **2653** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **37484** | 主记忆 |
+| personal_memories | **37487** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **410** | 召回日志 |
+| recall_logs | **411** | 召回日志 |
 | latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
 | memory_outbox | **1143** | ⚠️ 有待消费 |
-| session_summary_cursor | **159** | Session级摘要进度跟踪 |
+| session_summary_cursor | **160** | Session级摘要进度跟踪 |
 | memory_snapshots | **14** | 历史快照 |
 | trace_chain | **0** | 端到端追溯（2026-04-20 新建） |
 
@@ -523,6 +523,47 @@ process.env  >  中央凭证文件  >  fallback值
 - workspace 主仓库：commit 3c2ff15（方案报告）
 
 **状态**：✅ Phase 0-5 全部完成（2026-04-20）
+
+---
+
+### 操作审计日志系统（Audit Logging System）
+- **触发词**：审计日志、查审计、操作记录、谁改的、什么时候改的、audit
+- **档案**：`memory/AUDIT-SYSTEM-DESIGN.md`
+
+**核心文件**：
+```
+audit-scripts/
+├── append-audit.js   # 核心写入模块（append-only + 批量合并 + fallback）
+├── audit-redact.js   # 敏感信息脱敏（P0=完全隐藏，P1=部分隐藏）
+└── audit-query.js    # CLI查询工具
+```
+
+**存储位置**：`/home/ai/.openclaw/audit/YYYY-MM-DD.jsonl`
+
+**已捕获的操作类别**：
+| 类别 | 状态 | 说明 |
+|------|------|------|
+| DATABASE | ✅ 已部署 | session-capture-hook 数据库写入 |
+| FILE | ⏳ 待实施 | inotifywait 监控（Phase 2） |
+| PROCESS | ⏳ 待实施 | PM2 event hook（Phase 2） |
+| GIT | ⏳ 待实施 | Git hooks（Phase 2） |
+| CONFIG | ⏳ 待实施 | 配置文件监控（Phase 2） |
+| EXTERNAL_API | ⏳ 待实施 | HTTP 拦截（Phase 2） |
+| CRON | ⏳ 待实施 | cron 包装脚本（Phase 2） |
+
+**查询命令**：
+```bash
+node audit-scripts/audit-query.js --stats                    # 今日统计
+node audit-scripts/audit-query.js --category DATABASE       # 按类别查
+node audit-scripts/audit-query.js --op db:insert --limit 20 # 按操作查
+```
+
+**日志格式**（示例）：
+```json
+{"id":"uuid","ts":"2026-04-20T03:56:00.000Z","category":"DATABASE","op":"db:insert","target":"conversation_messages (id=123)","before":null,"after":{"session_id":"...","role":"user","content_length":150},"result":{"success":true,"latencyMs":0},"metadata":{"hostname":"ai-MS-S1-MAX","source":"session-capture-hook"}}
+```
+
+**状态**：✅ Phase 1 完成（2026-04-20）
 
 ---
 

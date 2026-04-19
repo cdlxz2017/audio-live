@@ -108,6 +108,51 @@ pm2 logs session-summary-extractor --nostream --lines 20
 | **L9** | 用户消息 → recall hook → session-recall | recall hook → session-recall.js → pgvector HNSW 召回 | ✅ |
 | **L10** | recall hook → cascadeRecall | 三级级联召回（新增 v4.4）| ✅ |
 | **L11** | get-summary-sources 追溯接口 | get-summary-sources.js 双向追溯（summary↔message）| ✅ |
+| **L12** | 端到端追溯链（Trace Chain） | trace_chain 表：每步打卡，实时监控 | ✅ 2026-04-20 新建 |
+
+#### 自学习记忆引擎（v1.0 — 2026-04-20）
+
+**四条数据链**：
+
+| 链 | 状态 | 说明 |
+|-----|------|------|
+| 第一条：置信度→研究触发 | ✅ 修复 | learning-trigger 触发 → active-researcher 执行 |
+| 第二条：learned→recall | ✅ 修复 | cron 每30分钟导入 memory/learned → memory_summaries |
+| 第三条：feedback 写入 | 🔧 待启用 | 需要 Telegram inline button 配合（recall-hook 不改） |
+| 第四条：自适应权重 | ⏳ 待构建 | 依赖 feedback 数据积累后自动调整 intent 权重 |
+
+**核心组件**：
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| 置信度评估 | `scripts/learning-trigger.js` | confidence < 0.55 触发后台研究 |
+| 主动研究 | `scripts/active-researcher.js` | DeepSeek-Chat + Brave Search 研究，结果存 memory/learned/ |
+| learned 导入 | `scripts/import-learned-to-summaries.js` | cron 每30分钟将 learned 导入 memory_summaries |
+| feedback 写入 | `scripts/record-feedback.js` | 外部反馈写入 recall_logs.feedback（CLI 模式）|
+| 监控面板 | `scripts/learning-engine-monitor.js` | 四条数据链健康度监控 |
+
+**使用方式**：
+
+1. **自动触发**：recall hook 检测到置信度 < 0.55，自动触发 active-researcher 后台研究
+2. **手动检查**：
+   ```bash
+   # 监控四条数据链
+   node memory-system/scripts/learning-engine-monitor.js
+
+   # 手动触发研究（测试用）
+   node memory-system/scripts/active-researcher.js --query "什么是MCP" --concept "MCP协议" --confidence 0.4
+
+   # 手动写入 feedback（测试用）
+   node memory-system/scripts/record-feedback.js --query "MCP是什么" --feedback 1 --sender telegram:8707975769
+   ```
+3. **监控 cron**：每10分钟检查，异常时记录到副脑 Thread |
+
+**Cron 任务**：
+- `*/30 * * * *` — 将 memory/learned 导入 memory_summaries
+- `*/10 * * * *` — 同步监控状态到副脑 Thread |
+
+**触发词**：学习引擎 / 自学习 / 记忆引擎 / learning |
+
 
 #### 召回系统架构（v4.4 — Week 3 完成）
 
@@ -209,20 +254,22 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 
 ---
 
-#### 关键表数据量（2026/4/17 更新）
+#### 关键表数据量（2026/4/19 22:12 更新）
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **3921** | 原始对话存档 |
-| memory_summaries | **1838** | 摘要（v4.5+ Session级）|
+| conversation_messages | **4296** | 原始对话存档 |
+| memory_summaries | **1872** | 摘要（v4.5+ Session级）|
 | memories | **2653** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **37172** | 主记忆 |
+| personal_memories | **37484** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **398** | 召回日志 |
+| recall_logs | **410** | 召回日志 |
 | latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
-| memory_outbox | 0 | 无积压 |
-| session_summary_cursor | **156** | Session级摘要进度跟踪 |
+| memory_outbox | **1143** | ⚠️ 有待消费 |
+| session_summary_cursor | **159** | Session级摘要进度跟踪 |
+| memory_snapshots | **14** | 历史快照 |
+| trace_chain | **0** | 端到端追溯（2026-04-20 新建） |
 
 #### 数据库快照表（方案二 — 长期可观测）
 
@@ -772,4 +819,56 @@ cd ~/.config && git add . && git commit -m "描述"
 
 ---
 
-_最后更新：2026-04-17（latest_summaries_cache B2方案上线）_
+## 能力图谱（capability-graph）
+
+> 2026-04-19 新建，与 SYSTEMS.md 互补：SYSTEMS.md 是详细注册表，能力图谱是结构化知识卡片
+
+### 目录结构
+
+```
+capability-graph/
+├── SOP-EXCELLENCE-FRAMEWORK.md   ← 卓越执行框架 SOP v2.1
+├── PLAN-BUILD-OUT.md             ← 三阶段搭建计划
+├── NAVIGATION.md                 ← 总导航仪表盘
+│
+├── systems/          (7)         ← 系统卡片
+├── tools/            (6)         ← 工具卡片
+├── skills/
+│   ├── custom/       (8+3)       ← 自制 Skill（8完善 + 3开发中）
+│   ├── workspace/    (1)         ← 工作区 Skill 索引（7个）
+│   └── builtin/      (1)         ← 系统 Skill 索引（53个）
+├── frameworks/       (1)         ← 方法论卡片
+├── risk-patterns/    (1)         ← 危险点（3条）
+└── pitfalls/         (1)         ← 避坑经验（4条）
+```
+
+### 能力图谱索引
+
+| 类别 | 文件数 | 路径 |
+|------|--------|------|
+| 系统卡片 | 7 | `capability-graph/systems/` |
+| 工具卡片 | 6 | `capability-graph/tools/` |
+| 自制 Skill | 11 | `capability-graph/skills/custom/` |
+| 工作区 Skill | 7 | `capability-graph/skills/workspace/` |
+| 系统 Skill | 53 | `capability-graph/skills/builtin/` |
+| 方法论 | 1 | `capability-graph/frameworks/` |
+| 危险点 | 3 | `capability-graph/risk-patterns/` |
+| 避坑经验 | 4 | `capability-graph/pitfalls/` |
+
+### 卓越执行框架 SOP
+
+| 项目 | 值 |
+|------|-----|
+| 版本 | v2.1 |
+| 生效日期 | 2026-04-19 |
+| 评审 | Claude Opus + DeepSeek Reasoner |
+| 核心 | 三级通道（快速/标准/完整）+ 团队模式 + 危险点前置 + 文档闭环 |
+| 文件 | `capability-graph/SOP-EXCELLENCE-FRAMEWORK.md` |
+
+### 副脑 Thread
+
+当前活跃任务记录在 Problem Thread（副脑），API: `http://localhost:54321/threads?status=active`
+
+---
+
+_最后更新：2026-04-20（自学习记忆引擎上线：4条数据链修复+监控+文档）_

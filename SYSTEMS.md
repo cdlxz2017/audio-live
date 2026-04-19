@@ -556,7 +556,14 @@ audit-scripts/
 node audit-scripts/audit-query.js --stats                    # 今日统计
 node audit-scripts/audit-query.js --category DATABASE       # 按类别查
 node audit-scripts/audit-query.js --op db:insert --limit 20 # 按操作查
+node audit-scripts/audit-monitor.js                         # 监控检查
 ```
+
+**监控方式**：每4小时健康检查邮件包含审计系统状态，监控指标：
+- 目录可写性（日志权限 700，文件权限 600）
+- 记录时效性（超过30分钟无新记录告警）
+- 增量检测（对比上次记录数）
+- JSONL格式完整性（每行可解析）
 
 **日志格式**（示例）：
 ```json

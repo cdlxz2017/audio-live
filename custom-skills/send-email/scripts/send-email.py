@@ -8,19 +8,35 @@ send-email: 发送带附件的邮件
 
 import smtplib
 import argparse
+import pathlib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import sys
 
+# ─── 中央凭证加载（Phase 2）──
+_cwd = pathlib.Path(__file__).resolve().parent
+_loader_path = _cwd.parent.parent.parent / '.openclaw' / 'credentials'
+if _loader_path.exists():
+    sys.path.insert(0, str(_loader_path))
+    try:
+        from loader import get_qqmail_credential
+        _QQ_USER = get_qqmail_credential('user', '')
+        _QQ_AUTH = get_qqmail_credential('auth_code', '')
+    except Exception:
+        _QQ_USER = ''
+        _QQ_AUTH = ''
+else:
+    _QQ_USER = ''
+    _QQ_AUTH = ''
 
 # ============ 配置区（可按需修改默认发件人）============
-DEFAULT_FROM = "cdlxz2017@qq.com"
+DEFAULT_FROM = _QQ_USER or "cdlxz2017@qq.com"
 SMTP_HOST = "smtp.qq.com"
 SMTP_PORT = 587
-SMTP_USER = "cdlxz2017@qq.com"
-SMTP_PASS = "egtlvgsyafpvcfde"  # QQ邮箱授权码
+SMTP_USER = _QQ_USER or "cdlxz2017@qq.com"
+SMTP_PASS = _QQ_AUTH or ""  # QQ邮箱授权码（从中央凭证读取）
 EMAIL_SIGNATURE = "\n\n—— 天道AI"
 # =====================================================
 

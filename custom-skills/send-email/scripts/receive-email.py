@@ -15,12 +15,29 @@ from email.header import decode_header
 import argparse
 import sys
 import datetime
+import pathlib
+
+# ─── 中央凭证加载（Phase 2）──
+_cwd = pathlib.Path(__file__).resolve().parent
+_loader_path = _cwd.parent.parent.parent / '.openclaw' / 'credentials'
+if _loader_path.exists():
+    sys.path.insert(0, str(_loader_path))
+    try:
+        from loader import get_qqmail_credential
+        _QQ_USER = get_qqmail_credential('user', '')
+        _QQ_AUTH = get_qqmail_credential('auth_code', '')
+    except Exception:
+        _QQ_USER = ''
+        _QQ_AUTH = ''
+else:
+    _QQ_USER = ''
+    _QQ_AUTH = ''
 
 # ============ 配置区 =====================================
 IMAP_HOST = "imap.qq.com"
 IMAP_PORT = 993
-IMAP_USER = "cdlxz2017@qq.com"
-IMAP_PASS = "egtlvgsyafpvcfde"  # QQ邮箱授权码
+IMAP_USER = _QQ_USER or "cdlxz2017@qq.com"
+IMAP_PASS = _QQ_AUTH or ""  # QQ邮箱授权码（从中央凭证读取）
 # =====================================================
 
 

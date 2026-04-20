@@ -283,9 +283,9 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 | 表 | 数量 | 说明 |
 |----|------|------|
 | conversation_messages | **0** | 原始对话存档 |
-| memory_summaries | **0** | 摘要（v4.5+ Session级）|
+| memory_summaries | **2** | 摘要（v4.5+ Session级）|
 | memories | **0** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **0** | 主记忆 |
+| personal_memories | **7** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
 | recall_logs | **0** | 召回日志 |
 | latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|

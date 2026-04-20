@@ -67,7 +67,8 @@
 - **包含**：session-summary-extractor（Session级摘要Daemon，10分钟扫描）、session-extractor、graph-linker、outbox-writer、graphify-opus-manager
 - **端口**：18789（Gateway）/ 31234（Graphify Query）
 - **版本**：v4.5+（新Session摘要召回 + Session级摘要Daemon：2026-04-16，**2026-04-17已部署daemon**）
-- **状态**：✅ 运行中（**6/6进程**，含session-summary-extractor daemon）
+- **状态**：✅ 运行中（**5/6进程**，session-summary-extractor稳定，summary-extractor已于2026-04-20停止）
+- **说明**：2026-04-20发现summary-extractor入口文件丢失（从未git commit，文件系统误删），导致565,879次crash重启。已停止该进程，由session-summary-extractor单一提取器承载全部摘要写入任务（避免重复写入）
 
 #### Session级摘要系统（session-summary-extractor）
 
@@ -280,12 +281,12 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **4404** | 原始对话存档 |
-| memory_summaries | **1873** | 摘要（v4.5+ Session级）|
+| conversation_messages | **4425** | 原始对话存档 |
+| memory_summaries | **1882** | 摘要（v4.5+ Session级）|
 | memories | **2653** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **37599** | 主记忆 |
+| personal_memories | **37612** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **424** | 召回日志 |
+| recall_logs | **426** | 召回日志 |
 | latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
 | memory_outbox | **1143** | ⚠️ 有待消费 |

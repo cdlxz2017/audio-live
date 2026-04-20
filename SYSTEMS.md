@@ -281,7 +281,7 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **4450** | 原始对话存档 |
+| conversation_messages | **4474** | 原始对话存档 |
 | memory_summaries | **1882** | 摘要（v4.5+ Session级）|
 | memories | **2653** | 结构化 entity/attr/value（content 填充率 100%）|
 | personal_memories | **37622** | 主记忆 |
@@ -622,9 +622,27 @@ node audit-scripts/audit-monitor.js                         # 监控检查
 
 ---
 
+## 靈一民宿管理系统（lingyi-cms）
+
+- **触发词**：民宿、lingyi、CRM、客人管理、预订
+- **Docker容器**：lingyi-frontend / lingyi-backend / lingyi-db
+- **访问地址**：
+  | 服务 | 地址 | 说明 |
+  |------|------|------|
+  | 前台网站 | http://192.168.0.100:3001 | 靈一民宿官网 |
+  | 后台API | http://192.168.0.100:8001 | 后端REST API |
+- **数据库**：localhost:5433（lingyi-db容器）
+  - 用户：linyi_user / 密码：E4jZRKt3xN8qLp2v
+  - 数据库：linyi_db
+- **项目路径**：`/home/ai/.openclaw/workspace/projects/lingyi-cms/`
+- **核心修改**：bills.py（次卡/月包营收修复）、reports.py（报表营收修复）
+- **状态**：✅ Docker运行中
+
+---
+
 ## 天道·系统（Tiandao Microservices）
 
-- **触发词**：天道、系统后台、民宿管理
+- **触发词**：天道、系统后台
 - **管理后台**：http://localhost:3003
 - **服务端口**：
   | 服务 | 端口 | 说明 |
@@ -660,6 +678,15 @@ node audit-scripts/audit-monitor.js                         # 监控检查
   ```javascript
   node /home/ai/.openclaw/workspace/custom-skills/hermes-router/hermes-router.js
   ```
+
+### 网页入口
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| **Hermes Web UI** | http://192.168.0.100:31236 | 玄一网页控制台（推荐）|
+| **Hermes API Server** | http://192.168.0.100:31235 | API接口（/health、/chat、/sessions）|
+
+- **PM2进程**：hermes-server（31235）、hermes-web（31236）均 ✅ online
 - **状态**：✅ Phase 1-3已完成
 
 ---

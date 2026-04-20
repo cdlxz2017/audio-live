@@ -37,17 +37,25 @@
 3. 确认没有 breaking changes
 ```
 
-### Step 2：快照保护（如果已安装 arc-skill-gitops）
+### Step 2：安全审核（强制）
+```
+skill-vetter <skill-slug>
+```
+- 必须先完成安全审核才能继续
+- 审核不通过 → 终止更新，报告主人
+- 审核标准：VT suspicious = ❌ / 外部 API key = ⚠️ / 代码审查通过 = ✅
+
+### Step 3：快照保护（如果已安装 arc-skill-gitops）
 ```
 arc-skill-gitops snapshot --skill ~/.openclaw/workspace/skills/<skill-name> --tag "pre-auto-update-$(date +%Y%m%d)"
 ```
 
-### Step 3：执行更新
+### Step 4：执行更新
 ```
 clawhub update <skill-slug>
 ```
 
-### Step 4：验证
+### Step 5：验证
 ```
 1. 读取新的 SKILL.md，确认安装成功
 2. 运行 health-check.js，确认系统正常
@@ -63,7 +71,23 @@ clawhub update <skill-slug>
 
 ---
 
-## 三、本地 Skill（不在 clawhub）的更新方式
+## 三、安装新 Skill（不只是更新）
+
+**任何 skill 安装前也必须审核**：
+```bash
+# 主人说"帮我安装 xxx skill"
+# 第一步：安全审核（强制）
+skill-vetter <skill-slug>
+# 审核不通过 → 终止，报告原因
+
+# 第二步: 审核通过后 → 执行安装
+clawhub install <skill-slug>
+
+# 第三步：文档闭环
+# 更新 SYSTEMS.md / MEMORY.md / 当日日记
+```
+
+## 四、本地 Skill（不在 clawhub）的更新方式
 
 | Skill | 更新方式 |
 |-------|---------|
@@ -90,8 +114,9 @@ scripts/
 
 ---
 
-## 五、禁止事项
+## 六、禁止事项
 
+- ❌ 禁止未经安全审核安装或更新任何 skill
 - ❌ 禁止全自动更新（不经过主人确认）
 - ❌ 禁止同时更新多个 skill
 - ❌ 禁止跳过验证步骤

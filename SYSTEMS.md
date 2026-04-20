@@ -1021,6 +1021,14 @@ capability-graph/
 | 核心 | 三级通道（快速/标准/完整）+ 团队模式 + 危险点前置 + 文档闭环 |
 | 文件 | `capability-graph/SOP-EXCELLENCE-FRAMEWORK.md` |
 
+### 副脑召回监控系统
+- **触发词**：副脑召回监控、副脑监控、pt-monitor、召回报告
+- **使用**：`node /home/ai/.openclaw/workspace/audit-scripts/pt-recall-monitor/pt-recall-report.js`
+- **Cron**：每5分钟自动执行
+- **监控指标**：各店召回次数 / P99延迟 / 具体thread ID / 延迟告警阈值500ms
+- **数据隔离**：SQLite（600权限），主脑零影响，完全独立
+- **状态**：✅ 运行中
+
 ### 副脑 Thread
 
 当前活跃任务记录在 Problem Thread（副脑），API: `http://localhost:54321/threads?status=active`

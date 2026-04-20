@@ -240,7 +240,7 @@ node memory-system/scripts/recall-live-monitor.js --alert
 
 **已知问题修复（2026-04-20）**：
 - ✅ Graphify 对齐 bug：`extractAlignedIds()` 改用 `alignedMemories[].id`（不再用 `node.id`）
-- ✅ TECHNICAL 正则关键词扩充（+18个技术词汇）
+- ✅ TECHNICAL 正则关键词扩充（+18个技术词汇 + ollama/bge-m3/keep_alive/session/会话）
 - ✅ Redis 缓存工作正常（TTL 5分钟，hit 时输出 Cache HIT）
 
 **级联召回配置**：

@@ -1,0 +1,15 @@
+{
+  "id": "2026-04-19-1776623862631",
+  "concept": "MCP协议",
+  "query": "MCP协议",
+  "confidence": 0.4,
+  "researchResult": {
+    "summary": "研究失败: Expected ',' or ']' after array element in JSON at position 445 (line 9 column 6)",
+    "sources": [],
+    "conclusion": "",
+    "needsApproval": true,
+    "confidenceBoost": 0
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-19T18:37:42.631Z"
+}

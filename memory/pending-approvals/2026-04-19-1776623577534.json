@@ -1,0 +1,15 @@
+{
+  "id": "2026-04-19-1776623577667",
+  "concept": "MCP协议",
+  "query": "MCP协议是什么",
+  "confidence": 0.4,
+  "researchResult": {
+    "summary": "研究失败: LLM API error: 401",
+    "sources": [],
+    "conclusion": "",
+    "needsApproval": true,
+    "confidenceBoost": 0
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-19T18:32:57.667Z"
+}

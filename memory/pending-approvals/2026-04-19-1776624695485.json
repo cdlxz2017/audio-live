@@ -1,0 +1,34 @@
+{
+  "id": "2026-04-19-1776624709295",
+  "concept": "MCP协议",
+  "query": "Model Context Protocol",
+  "confidence": 0.3,
+  "researchResult": {
+    "summary": "Model Context Protocol (MCP) 是一种由 Anthropic 提出的开放协议，旨在标准化大型语言模型（LLM）与外部工具、数据源之间的安全、结构化通信。它允许模型通过标准化的“服务器-客户端”架构动态访问和利用外部资源（如数据库、API、文件系统），同时通过权限控制和声明式接口保障安全性。MCP 的核心目标是增强 LLM 的上下文处理能力，使其能更可靠地集成实时数据并执行复杂任务，而无需修改模型本身。",
+    "sources": [
+      {
+        "title": "Anthropic 官方文档：Model Context Protocol",
+        "url": "https://modelcontextprotocol.io/",
+        "tier": "L1",
+        "verified": true
+      },
+      {
+        "title": "Anthropic 技术博客：Introducing the Model Context Protocol",
+        "url": "https://www.anthropic.com/news/model-context-protocol",
+        "tier": "L1",
+        "verified": true
+      },
+      {
+        "title": "GitHub 仓库：modelcontextprotocol/specification",
+        "url": "https://github.com/modelcontextprotocol/specification",
+        "tier": "L1",
+        "verified": true
+      }
+    ],
+    "conclusion": "MCP 是一个由 Anthropic 主导的开放协议，用于标准化 LLM 与外部资源的交互。其架构基于客户端（模型/应用）-服务器（资源提供方）模式，通过 JSON-RPC 通信，支持工具调用、资源检索和提示模板等功能。开发者可通过实现 MCP 服务器扩展模型能力，同时协议内置权限控制与类型安全。建议技术团队评估其在 LLM 应用集成中的适用性，并参考官方规范进行实现。",
+    "needsApproval": false,
+    "confidenceBoost": 0.7
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-19T18:51:49.295Z"
+}

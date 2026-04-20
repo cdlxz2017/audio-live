@@ -1,0 +1,28 @@
+{
+  "id": "2026-04-19-1776623930888",
+  "concept": "MCP协议",
+  "query": "MCP协议",
+  "confidence": 0.4,
+  "researchResult": {
+    "summary": "基于现有知识，MCP协议最可能指代“Model Context Protocol”（模型上下文协议）。这是一个由Anthropic等公司推动的开放协议，旨在标准化大型语言模型（LLM）与外部工具、数据源（如数据库、API、文件系统）之间的安全、结构化通信。其核心目标是使LLM能够动态地发现、调用和集成外部功能，扩展模型能力，同时通过明确的权限控制保障安全。该协议类似于一个插件系统，但强调标准化和互操作性。",
+    "sources": [
+      {
+        "title": "Anthropic官方文档（Model Context Protocol介绍）",
+        "url": "https://www.anthropic.com/news/model-context-protocol",
+        "tier": "L1",
+        "verified": true
+      },
+      {
+        "title": "MCP官方GitHub仓库",
+        "url": "https://github.com/modelcontextprotocol",
+        "tier": "L1",
+        "verified": true
+      }
+    ],
+    "conclusion": "MCP（Model Context Protocol）是一个用于连接LLM与外部数据和工具的开放协议。它定义了服务器（提供工具/数据）与客户端（如Claude Desktop、IDE插件）之间的标准通信方式。核心组件包括：1) 架构（服务器/客户端）；2) 协议规范（JSON-RPC over stdio/SSE）；3) 工具与资源的声明与调用机制；4) 安全权限模型。开发者可依此构建“MCP服务器”来扩展LLM功能。主要应用场景包括代码库分析、实时数据查询、自定义工具调用等。",
+    "needsApproval": false,
+    "confidenceBoost": 0.8
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-19T18:38:50.888Z"
+}

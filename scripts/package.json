@@ -1,0 +1,13 @@
+{
+  "name": "comprehensive-health-check",
+  "version": "1.0.0",
+  "description": "综合健康检查脚本",
+  "main": "comprehensive-health-check.js",
+  "scripts": {
+    "check": "node comprehensive-health-check.js"
+  },
+  "dependencies": {
+    "redis": "^4.7.0",
+    "node-fetch": "^2.7.0"
+  }
+}

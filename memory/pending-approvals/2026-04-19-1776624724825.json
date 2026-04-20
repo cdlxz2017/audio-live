@@ -1,0 +1,82 @@
+{
+  "id": "2026-04-19-1776624741707",
+  "concept": "MCP协议",
+  "query": "Model Context Protocol",
+  "confidence": 0.3,
+  "researchResult": {
+    "summary": "Model Context Protocol (MCP) 是由 Anthropic 主导开发并于2024年11月开源的一种标准化通信协议。其核心目标是解决大型语言模型（LLM）与外部数据源、工具及系统之间安全、无缝集成的难题。MCP通过定义客户端（如AI应用、IDE）与服务器（提供数据或工具）之间的标准接口，使LLM能够动态、安全地访问实时信息、数据库和API，从而突破其固有知识限制，构建更强大、可靠的AI应用。它被视为推动AI应用层开发进入新时代的关键基础设施。",
+    "sources": [
+      {
+        "title": "MCP 终极指南",
+        "url": "https://guangzhengli.com/blog/zh/model-context-protocol",
+        "tier": "L3",
+        "verified": true
+      },
+      {
+        "title": "Understanding Model Context Protocol (MCP)",
+        "url": "https://modelcontextprotocol.info/docs/introduction/",
+        "tier": "L2",
+        "verified": true
+      },
+      {
+        "title": "What is MCP (Model Context Protocol) and how it works · Logto blog",
+        "url": "https://blog.logto.io/what-is-mcp",
+        "tier": "L3",
+        "verified": true
+      },
+      {
+        "title": "一文搞懂 MCP Servers - 虫师 - 博客园",
+        "url": "https://www.cnblogs.com/fnng/p/18744210",
+        "tier": "L3",
+        "verified": true
+      },
+      {
+        "title": "What is Model Context Protocol (MCP)? A guide | Google Cloud",
+        "url": "https://cloud.google.com/discover/what-is-model-context-protocol",
+        "tier": "L2",
+        "verified": true
+      }
+    ],
+    "conclusion": "基于L2级官方文档和Google Cloud指南，可确认MCP的核心事实：1. **定义**：MCP是Anthropic主导开源的标准化协议。2. **目的**：为LLM安全访问外部数据和工具提供通用接口。3. **架构**：基于客户端-服务器模型，服务器封装资源，客户端（如Claude Desktop）通过协议调用。4. **价值**：提升AI应用开发效率与安全性，是构建复杂AI Agent的基础设施。建议开发者查阅官方文档（modelcontextprotocol.io）以获取技术细节。",
+    "needsApproval": false,
+    "confidenceBoost": 0.5
+  },
+  "ratedResults": [
+    {
+      "title": "MCP 终极指南",
+      "url": "https://guangzhengli.com/blog/zh/model-context-protocol",
+      "snippet": "过去快一年的时间没有更新 AI 相关的博客，一方面是在忙 side project，另外一方面也是因为 AI 技术虽然日新月异，但是 AI 应用层的开发并没有多少新的东西，大体还是[2023年的博客](https://guangzhengli.com/blog/zh/gpt-embeddings/)讲的那三样，Prompt、RAG、Agent。但是自从去年 11 月底 Claude(Anthropic) 主导发布了 MCP(Model Context Protocol 模型上下文协议) 后，AI 应用层的开发算是进入了新的时代。不过关于 MCP 的解释和开发，目前似乎还没有太多的资料，所以笔者决定将自己的一些经验和思考整理成一篇文章，希望能够帮助到大家。",
+      "credibilityScore": 1,
+      "tier": "L4"
+    },
+    {
+      "title": "Understanding Model Context Protocol (MCP)",
+      "url": "https://modelcontextprotocol.info/docs/introduction/",
+      "snippet": "A comprehensive guide to MCP - the universal interface that bridges AI models with real-world data and tools, designed for developers and architects",
+      "credibilityScore": 1,
+      "tier": "L4"
+    },
+    {
+      "title": "What is MCP (Model Context Protocol) and how it works · Logto blog",
+      "url": "https://blog.logto.io/what-is-mcp",
+      "snippet": "An easy-to-understand guide to Model Context Protocol (MCP), explaining how it helps LLMs access external resources to overcome knowledge limitations and build more powerful AI applications.",
+      "credibilityScore": 1,
+      "tier": "L4"
+    },
+    {
+      "title": "一文搞懂 MCP Servers - 虫师 - 博客园",
+      "url": "https://www.cnblogs.com/fnng/p/18744210",
+      "snippet": "一文搞懂 MCP Servers 什么是MCP ...协议）<strong>是由 Anthropic 提出并于 2024 年 11 月开源的一种通信协议，旨在解决大型语言模型（LLM）与外部数据源及工具之间无缝集成的需求</strong>。 ...",
+      "credibilityScore": 1,
+      "tier": "L4"
+    },
+    {
+      "title": "What is Model Context Protocol (MCP)? A guide | Google Cloud",
+      "url": "https://cloud.google.com/discover/what-is-model-context-protocol",
+      "snippet": "Learn how the Model Context Protocol (MCP) standard allows LLMs to safely access external data and use tools, making AI more powerful and reliable.",
+      "credibilityScore": 1,
+      "tier": "L4"
+    }
+  ],
+  "createdAt": "2026-04-19T18:52:21.707Z"
+}

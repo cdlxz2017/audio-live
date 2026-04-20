@@ -73,7 +73,7 @@
 | 技术知识库 | `skills/custom/tech-knowledge.md` | 21文档向量检索 |
 | graph-linker监控 | `skills/custom/graph-linker-monitor.md` | Stream积压分析 |
 | 其他自制 | `skills/custom/other-custom.md` | audio-stream/graphify/task-router（开发中） |
-| 工作区skill | `skills/workspace/workspace-skills.md` | defuddle/json-canvas/obsidian等7个 |
+| 工作区skill | `skills/workspace/workspace-skills.md` | defuddle/json-canvas/obsidian等8个 |
 | 系统skill | `skills/builtin/builtin-index.md` | 53个系统自带skill索引 |
 
 ### 框架/风险/避坑
@@ -256,7 +256,7 @@
               │                                      ↓
               │                           extractor-file-based.js → A表 ✅
               │
-              ├─→ summary-extractor (PM2 #2) → memory_summaries (实时产出)
+              ├─→ summary-extractor (PM2 #2) → memory_summaries (实时产出) ❌ **已停止（2026-04-20）：入口文件从未git commit，文件系统丢失，565,879次crash重启后停止，由session-summary-extractor替代**
               │                                      ↓
               │               ┌─→ graph:sync:events → graph-linker (Memory_tenantId 节点)
               │               │
@@ -311,7 +311,7 @@
 |-----|--------|------|------|
 | #0 | session-extractor | `session-file-extractor-loop.js` | ✅ 正常，文件扫描 |
 | #1 | graph-linker | `graph-linker.js` | ✅ 正常 |
-| #2 | summary-extractor | `summary-extractor-loop.js` | ✅ 正常，含 Neo4j 实时同步 |
+| #2 | summary-extractor | `summary-extractor-loop.js` | ❌ **已停止（2026-04-20）：入口文件从未git commit，文件系统丢失，565k次crash重启后停止，session-summary-extractor替代** |
 | #3 | tiandao-member | `dist/index.js` | ✅ 运行中 |
 | #4 | tiandao-auth | `dist/index.js` | ✅ 运行中 |
 | #5 | tiandao-karma | `dist/index.js` | ✅ 运行中 |
@@ -325,7 +325,7 @@
 |----|------|------|
 | `memories` | 1705 条 | 结构化记忆（entity/attr/value），来自文件扫描路径 |
 | `personal_memories` | 36,772 条 | 原始内容记忆（dialogue占32689条来自session提取，其余各类技术/决策/事件等）|
-| `memory_summaries` | 318 条+ | summary-extractor 实时产出（4月9日起）|
+| `memory_summaries` | 1874 条+ | session-summary-extractor 实时产出（summary-extractor已于2026-04-20停止）|
 | `conversation_messages` | 1593 条 | 原始对话存档 |
 | `recall_logs` | 21 条 | 召回历史 |
 

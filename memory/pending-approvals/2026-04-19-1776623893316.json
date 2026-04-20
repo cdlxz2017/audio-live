@@ -1,0 +1,15 @@
+{
+  "id": "2026-04-19-1776623905359",
+  "concept": "MCP协议",
+  "query": "MCP协议",
+  "confidence": 0.4,
+  "researchResult": {
+    "summary": "```json\n{\n  \"summary\": \"基于现有知识，MCP协议最可能指代“Model Context Protocol”（模型上下文协议）。这是一个由Anthropic等公司推动的开放协议，旨在标准化大型语言模型（LLM）与外部工具、数据源（如数据库、API、文件系统）之间的安全、结构化通信。其核心目标是使LLM能够动态地发现、调用和集成外部功能，扩展模型能力，同时通过明确的权限控制保障安全。该协议类似于一个插件系统，但强调标准化和互操作性。\",\n  \"sources\": [\n    {\n      \"title\": \"Anthropic官方文档（Model Context Prot",
+    "sources": [],
+    "conclusion": "",
+    "needsApproval": true,
+    "confidenceBoost": 0
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-19T18:38:25.359Z"
+}

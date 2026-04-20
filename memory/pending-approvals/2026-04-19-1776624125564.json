@@ -1,0 +1,34 @@
+{
+  "id": "2026-04-19-1776624136417",
+  "concept": "量子纠缠",
+  "query": "量子纠缠",
+  "confidence": 0.3,
+  "researchResult": {
+    "summary": "量子纠缠是量子力学中的核心现象，指两个或多个粒子系统间存在强关联，使得一个粒子的状态会瞬间影响另一个粒子的状态，无论它们相距多远。这种现象违背了经典物理的局域实在性，被爱因斯坦称为“鬼魅般的超距作用”。量子纠缠是量子计算、量子通信和量子密码学的基础资源，已在实验中被反复验证（如贝尔不等式检验）。目前研究重点包括纠缠的产生、度量、分发及其在量子技术中的应用。",
+    "sources": [
+      {
+        "title": "Quantum entanglement - Wikipedia",
+        "url": "https://en.wikipedia.org/wiki/Quantum_entanglement",
+        "tier": "L2",
+        "verified": true
+      },
+      {
+        "title": "Quantum Entanglement and Information - Stanford Encyclopedia of Philosophy",
+        "url": "https://plato.stanford.edu/entries/qt-entangle/",
+        "tier": "L2",
+        "verified": true
+      },
+      {
+        "title": "Experimental verification of quantum entanglement - Nature Reviews Physics",
+        "url": "https://www.nature.com/articles/s42254-020-0193-5",
+        "tier": "L1",
+        "verified": true
+      }
+    ],
+    "conclusion": "量子纠缠是真实存在的物理现象，已通过贝尔实验等严格验证。它是量子信息技术的基石，可用于实现量子隐形传态、量子密钥分发和量子计算中的逻辑门操作。当前技术已能在实验室和有限距离（如卫星链路）中实现纠缠分发与操控。",
+    "needsApproval": false,
+    "confidenceBoost": 0.6
+  },
+  "ratedResults": [],
+  "createdAt": "2026-04-19T18:42:16.417Z"
+}

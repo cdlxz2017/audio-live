@@ -984,7 +984,7 @@ capability-graph/
 ├── tools/            (6)         ← 工具卡片
 ├── skills/
 │   ├── custom/       (8+3)       ← 自制 Skill（8完善 + 3开发中）
-│   ├── workspace/    (1)         ← 工作区 Skill 索引（7个）
+│   ├── workspace/    (1)         ← 工作区 Skill 索引（8个）
 │   └── builtin/      (1)         ← 系统 Skill 索引（53个）
 ├── frameworks/       (1)         ← 方法论卡片
 ├── risk-patterns/    (1)         ← 危险点（3条）
@@ -998,7 +998,7 @@ capability-graph/
 | 系统卡片 | 7 | `capability-graph/systems/` |
 | 工具卡片 | 6 | `capability-graph/tools/` |
 | 自制 Skill | 11 | `capability-graph/skills/custom/` |
-| 工作区 Skill | 7 | `capability-graph/skills/workspace/` |
+| 工作区 Skill | 8 | `capability-graph/skills/workspace/` |
 | 系统 Skill | 53 | `capability-graph/skills/builtin/` |
 | 方法论 | 1 | `capability-graph/frameworks/` |
 | 危险点 | 3 | `capability-graph/risk-patterns/` |

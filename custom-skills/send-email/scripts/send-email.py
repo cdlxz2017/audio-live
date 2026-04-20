@@ -15,9 +15,10 @@ from email.mime.base import MIMEBase
 from email import encoders
 import sys
 
-# ─── 中央凭证加载（Phase 2）──
-_cwd = pathlib.Path(__file__).resolve().parent
-_loader_path = _cwd.parent.parent.parent / '.openclaw' / 'credentials'
+# ─── 中央凭证加载（Phase 2）—— 修复路径 2026-04-20 ─
+import os, pathlib
+_cred_root = pathlib.Path(os.path.expanduser('~/.openclaw')) / 'credentials'
+_loader_path = _cred_root
 if _loader_path.exists():
     sys.path.insert(0, str(_loader_path))
     try:
@@ -34,7 +35,7 @@ else:
 # ============ 配置区（可按需修改默认发件人）============
 DEFAULT_FROM = _QQ_USER or "cdlxz2017@qq.com"
 SMTP_HOST = "smtp.qq.com"
-SMTP_PORT = 587
+SMTP_PORT = 465  # SSL 端口（2026-04-20 QQ邮件服务器要求）
 SMTP_USER = _QQ_USER or "cdlxz2017@qq.com"
 SMTP_PASS = _QQ_AUTH or ""  # QQ邮箱授权码（从中央凭证读取）
 EMAIL_SIGNATURE = "\n\n—— 天道AI"
@@ -87,9 +88,10 @@ def send(to_addr: str, subject: str, body: str,
             print(f"[Dry Run]   - {a}")
         return
 
-    print(f"正在连接 {SMTP_HOST}:{SMTP_PORT} (IPv4)...")
-    server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30, source_address=('0.0.0.0', 0))
-    server.starttls()
+    print(f"正在连接 {SMTP_HOST}:{SMTP_PORT} (SSL)...")
+    import ssl
+    context = ssl.create_default_context()
+    server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=30)
     server.login(SMTP_USER, SMTP_PASS)
     server.send_message(msg)
     server.quit()

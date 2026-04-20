@@ -1,0 +1,30 @@
+// ─── 主脑召回审计 monkey-patch（插入点：session-recall.js 第11行后）───
+(function() {
+  if (global.__mainBrainRecallPatched) return;
+  global.__mainBrainRecallPatched = true;
+
+  const AuditWriter = require('/home/ai/.openclaw/workspace/audit-scripts/main-recall-monitor/sqlite-writer');
+  const { RecallService } = require('./session-recall');
+
+  const _origRecall = RecallService.prototype.recall;
+  RecallService.prototype.recall = async function wrappedRecall(...args) {
+    const result = await _origRecall.apply(this, args);
+    try {
+      const [params = {}] = args;
+      AuditWriter.writeAudit({
+        recall_log_id: null,
+        session_id: params.sessionId || null,
+        sender_id: params.userId || null,
+        query_text: params.query || '',
+        intent: result.intent || null,
+        latency_ms: Date.now() - (params._startTime || Date.now()),
+        memories: result.memories || [],
+      });
+    } catch (e) {
+      console.error('[main-recall-audit] patch write error:', e.message);
+    }
+    return result;
+  };
+  console.log('[main-recall-audit] Monkey-patch applied to RecallService.prototype.recall');
+})();
+// ───────────────────────────────────────────────────────────────────────────

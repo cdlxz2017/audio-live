@@ -1021,6 +1021,14 @@ capability-graph/
 | 核心 | 三级通道（快速/标准/完整）+ 团队模式 + 危险点前置 + 文档闭环 |
 | 文件 | `capability-graph/SOP-EXCELLENCE-FRAMEWORK.md` |
 
+### 主脑召回监控系统
+- **触发词**：主脑召回监控、主脑监控、主脑记忆召回
+- **使用**：`node /home/ai/.openclaw/workspace/audit-scripts/main-recall-monitor/main-recall-report.js`
+- **Cron**：每5分钟自动执行
+- **监控指标**：各Intent召回统计 / Top召回记忆(提成参考) / 各Session明细 / P99延迟告警
+- **数据隔离**：SQLite（600权限），零侵入Monkey-patch
+- **状态**：✅ 运行中（2026-04-21 05:03）
+
 ### 副脑召回监控系统
 - **触发词**：副脑召回监控、副脑监控、pt-monitor、召回报告
 - **使用**：`node /home/ai/.openclaw/workspace/audit-scripts/pt-recall-monitor/pt-recall-report.js`

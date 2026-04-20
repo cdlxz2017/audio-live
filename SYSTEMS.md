@@ -280,7 +280,7 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **4399** | 原始对话存档 |
+| conversation_messages | **4401** | 原始对话存档 |
 | memory_summaries | **1873** | 摘要（v4.5+ Session级）|
 | memories | **2653** | 结构化 entity/attr/value（content 填充率 100%）|
 | personal_memories | **37599** | 主记忆 |

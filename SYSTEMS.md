@@ -67,7 +67,13 @@
 - **包含**：session-summary-extractor（Session级摘要Daemon，10分钟扫描）、session-extractor、graph-linker、outbox-writer、graphify-opus-manager
 - **端口**：18789（Gateway）/ 31234（Graphify Query）
 - **版本**：v4.5+（新Session摘要召回 + Session级摘要Daemon：2026-04-16，**2026-04-17已部署daemon**）
-- **状态**：✅ 运行中（**5/6进程**，session-summary-extractor稳定，summary-extractor已于2026-04-20停止）
+- **状态**：⚠️ 链路重建完成（2026-04-21 07:15）
+  - 重建目录：`/home/ai/.openclaw/workspace/memory-system-rebuild/`
+  - 报告：`memory-system-rebuild/REBUILD_REPORT.md`
+  - **召回链路 ✅ 完全可用**：P99=66ms，5/5 查询通过
+  - **写入链路**：memory_summaries ✅ / personal_memories ✅ / memories ⚠️ constraint缺失 / conversation_messages ⚠️ schema不匹配
+  - 原 memory-system：`/home/ai/.openclaw/workspace/memory-system/`（暂停，不受影响）
+  - 副脑 Problem Thread：✅ 未受影响（7条 Thread 完整）
 - **说明**：2026-04-20发现summary-extractor入口文件丢失（从未git commit，文件系统误删），导致565,879次crash重启。已停止该进程，由session-summary-extractor单一提取器承载全部摘要写入任务（避免重复写入）
 
 #### Session级摘要系统（session-summary-extractor）
@@ -282,16 +288,16 @@ PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| conversation_messages | **0** | 原始对话存档 |
-| memory_summaries | **2** | 摘要（v4.5+ Session级）|
-| memories | **0** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **7** | 主记忆 |
+| conversation_messages | **80** | 原始对话存档 |
+| memory_summaries | **3** | 摘要（v4.5+ Session级）|
+| memories | **3** | 结构化 entity/attr/value（content 填充率 100%）|
+| personal_memories | **48** | 主记忆 |
 | summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **0** | 召回日志 |
+| recall_logs | **22** | 召回日志 |
 | latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|
 | graphify_code_embeddings | **80364** | 代码图谱节点 |
 | memory_outbox | **1143** | ⚠️ 有待消费 |
-| session_summary_cursor | **0** | Session级摘要进度跟踪 |
+| session_summary_cursor | **38** | Session级摘要进度跟踪 |
 | memory_snapshots | **14** | 历史快照 |
 | trace_chain | **0** | 端到端追溯（2026-04-20 新建） |
 

@@ -130,6 +130,13 @@ bash /home/ai/.openclaw/workspace/scripts/security-check.sh
 > 用户说"检查安全"时调用此脚本
 > 检查 UFW 防火墙 + OSSEC HIDS + Active Response + fail2ban
 
+### Skill 更新检查
+```bash
+bash /home/ai/.openclaw/workspace/scripts/skill-update-checker.sh
+```
+> 每日 09:00 cron 自动跑，也可手动触发
+> 检查 clawhub 已安装 skill 的最新版本，生成报告并发邮件
+
 ### 记忆系统检查
 ```bash
 node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js

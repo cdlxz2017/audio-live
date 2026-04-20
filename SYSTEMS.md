@@ -150,7 +150,8 @@ pm2 logs session-summary-extractor --nostream --lines 20
 
 **Cron 任务**：
 - `*/30 * * * *` — 将 memory/learned 导入 memory_summaries
-- `*/10 * * * *` — 同步监控状态到副脑 Thread |
+- `*/10 * * * *` — 同步监控状态到副脑 Thread
+- `0 9 * * *` — 每日检查 skill 更新，生成报告并邮件通知 |
 
 **触发词**：学习引擎 / 自学习 / 记忆引擎 / learning |
 
@@ -907,6 +908,12 @@ bash /home/ai/.openclaw/workspace/scripts/security-check.sh
 - **五步法**：锁定信息点 → 绘制链路图 → 识别关联点 → 评估影响 → 制定根因方案
 - **路径**：`SOP-FAULT-ANALYSIS.md`
 - **禁止**：跳步分析、凭感觉修改、半成品输出
+
+### Skill 更新检查 SOP
+- **触发词**：检查 skill 更新、skill 有没有新版本、更新 skill
+- **机制**：每日 09:00 自动检查 → 生成报告 → 邮件通知 → 主人决策 → 我执行（带快照保护）
+- **路径**：`SOP-SKILL-UPDATE.md`
+- **禁止**：全自动更新（必须主人确认）、同时更新多个 skill、无快照更新生产环境 skill
 
 ---
 

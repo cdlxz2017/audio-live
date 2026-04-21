@@ -742,6 +742,120 @@ node audit-scripts/audit-monitor.js                         # 监控检查
 
 ---
 
+## 天道成员管理平台·跨平台安装包（tiandao_members_package）
+
+- **触发词**：打包、跨平台安装、mac安装包、ubuntu安装包、成员平台打包
+- **项目路径**：`/home/ai/projects/tiandao-system/tiandao_members_package/`
+- **打包规模**：3910 行脚本代码，15 个脚本文件，后端 + 前端完整源码（约 73MB）
+- **Git 仓库**：复用 tiandao_members 同一仓库
+
+### 目标平台
+
+| 平台 | 版本 | 架构 |
+|------|------|------|
+| macOS | 10.15+ | Apple Silicon（arm64）+ Intel（x64） |
+| Ubuntu | 20.04 / 22.04 / 24.04 | x64 |
+
+### 隔离保证
+
+| 项目 | 值 |
+|------|------|
+| 后端端口 | 30132（冲突自动递增到 30137） |
+| 前端端口 | 51732（冲突自动递增到 51737） |
+| 数据库端口 | 54332（冲突自动递增到 54337） |
+| 数据库名 | `tiandao_members_pack`（静态） |
+| 数据库用户 | `tiandao_members_user` |
+| PM2 进程前缀 | `pack_` |
+
+### 目录结构
+
+```
+tiandao_members_package/
+├── install-run.sh              # 主入口脚本
+├── README.md                  # 完整安装文档
+├── scripts/
+│   ├── common/               # 全平台通用
+│   │   ├── utils.sh         日志/颜色/错误处理
+│   │   ├── detect_os.sh     OS + 架构检测
+│   │   ├── check_ports.sh   端口分配
+│   │   └── generate_cert.sh 自签 HTTPS 证书生成
+│   ├── macos/               # macOS 专用
+│   │   ├── install_node.sh
+│   │   ├── install_postgresql.sh
+│   │   └── setup_launchd.sh  # launchd 服务配置
+│   ├── ubuntu/              # Ubuntu 专用
+│   │   ├── install_node.sh
+│   │   ├── install_postgresql.sh
+│   │   └── setup_systemd.sh  # systemd 服务配置
+│   └── app/
+│       ├── init_database.sh  # 数据库初始化（4张表）
+│       ├── build_frontend.sh # 前端生产构建
+│       └── start_services.sh # 服务启动
+├── bundles/                  # 离线安装包目录（Node.js + PostgreSQL）
+│   ├── macos-arm64/
+│   ├── macos-x64/
+│   └── ubuntu-x64/
+├── app/
+│   ├── backend/             # Express.js 后端（完整源码）
+│   └── frontend/            # React + Vite 前端（完整源码）
+├── config/                  # 运行时配置
+├── data/ssl/               # SSL 证书目录
+└── logs/                   # 运行日志
+```
+
+### 脚本清单
+
+| 脚本 | 行数 | 功能 |
+|------|------|------|
+| `install-run.sh` | 126 | 主入口，OS检测 + 流程调度 |
+| `scripts/common/utils.sh` | 130 | 日志/颜色/错误处理 |
+| `scripts/common/detect_os.sh` | 119 | OS + 架构检测 |
+| `scripts/common/check_ports.sh` | 156 | 端口分配（30132/51732/54332） |
+| `scripts/common/generate_cert.sh` | 198 | 自签 HTTPS 证书（10年有效期） |
+| `scripts/macos/install_node.sh` | 209 | macOS Node.js 安装 |
+| `scripts/macos/install_postgresql.sh` | 297 | macOS PostgreSQL 16 安装 |
+| `scripts/macos/setup_launchd.sh` | 381 | launchd 服务配置 |
+| `scripts/ubuntu/install_node.sh` | 252 | Ubuntu Node.js 安装 |
+| `scripts/ubuntu/install_postgresql.sh` | 300 | Ubuntu PostgreSQL 16 安装 |
+| `scripts/ubuntu/setup_systemd.sh` | 397 | systemd 服务配置 |
+| `scripts/app/init_database.sh` | 281 | 数据库初始化（4张表） |
+| `scripts/app/build_frontend.sh` | 285 | 前端生产构建 |
+| `scripts/app/start_services.sh` | 445 | 服务启动 |
+| `scripts/app/stop_services.sh` | 180 | 服务停止 |
+
+### 核心特性
+
+| 特性 | 实现方式 |
+|------|---------|
+| HTTPS 自签证书 | 启动时检测本机局域网 IP，openssl 生成含 SAN 证书，有效期 10 年 |
+| 开机自启 | macOS：launchd plist；Ubuntu：systemd service |
+| 离线安装 | bundles/ 目录预置 Node.js + PostgreSQL，优先离线再在线 |
+| Git 更新 | tag 发布，手动同步 |
+| 幂等脚本 | 所有脚本可重复执行，不破坏现有配置 |
+
+### 使用方式
+
+```bash
+# 1. 下载安装包到目标机器
+git clone <repo> tiandao_members_package
+cd tiandao_members_package
+
+# 2. 运行安装
+sudo ./install-run.sh
+
+# 3. 安装完成后访问
+# macOS: 打开 https://<本机IP>:51732
+# Ubuntu: 浏览器访问同上
+```
+
+### 状态
+
+- **状态**：✅ 构建完成（2026-04-22）
+- **交付物**：tiandao_members_package/ 目录
+- **最后更新**：2026-04-22 04:24
+
+---
+
 ## 邮件系统
 
 - **触发词**：发邮件、发送邮件、测试邮件
@@ -1044,6 +1158,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 自我监控 | ✅ 运行中 |
 | 邮件系统 | ✅ 正常 |
 | 天道成员管理平台 | ✅ 运行中（HTTPS 前后端）|
+| 天道成员管理平台·跨平台安装包 | ✅ 构建完成 |
 | 天道·系统 | ✅ 运行中（5服务）|
 | Hermes Agent | ✅ 可用 |
 | Goal Tracker | ✅ 可用 |
@@ -1129,4 +1244,4 @@ capability-graph/
 
 ---
 
-_最后更新：2026-04-22（新增天道成员管理平台 tiandao_members v2.0）_
+_最后更新：2026-04-22（新增天道成员管理平台跨平台安装包 tiandao_members_package）_

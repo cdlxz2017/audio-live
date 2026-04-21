@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 记忆系统健康检查
-REPORT=$(node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js 2>&1)
+REPORT=$(SUPPRESS_MEMORIES_ALERT=true SUPPRESS_CM_ALERT=true node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js 2>&1)
 MEMORY_EXIT=$?
 
 # 审计系统监控

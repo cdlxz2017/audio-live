@@ -1158,6 +1158,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 邮件系统 | ✅ 正常 |
 | 天道成员管理平台 | ✅ 运行中（HTTPS 前后端）|
 | 天道成员管理平台·跨平台安装包 | ✅ 构建完成 |
+| 洞鉴院（tiandao_dongjianyuan）| ✅ 运行中（前端3012 / 后端3014）|
 | 天道·系统 | ✅ 运行中（5服务）|
 | Hermes Agent | ✅ 可用 |
 | Goal Tracker | ✅ 可用 |
@@ -1243,4 +1244,93 @@ capability-graph/
 
 ---
 
-_最后更新：2026-04-22（新增天道成员管理平台跨平台安装包 tiandao_members_package）_
+## 洞鉴院（tiandao_dongjianyuan）
+
+- **触发词**：洞鉴院、dongjianyuan、情报监控、新闻监控
+- **项目路径**：`/home/ai/projects/tiandao_dongjianyuan/`
+- **Git**：已提交（commit f3963ed / develop 分支）
+
+### 访问地址（HTTPS）
+
+| 服务 | 地址 |
+|------|------|
+| **前端界面** | https://100.89.109.20:3012/ |
+| 后端 API | https://100.89.109.20:3014 |
+| 后端健康检查 | https://100.89.109.20:3014/api/health |
+
+### 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 前端 | Vue 3 + Vite（HTTPS）+ Tailwind CSS |
+| 后端 | Express.js + Node.js（HTTPS，端口 3014）|
+| 数据库 | PostgreSQL（独立库 dongjianyuan_db，5432）|
+| 认证 | JWT（24h）+ bcrypt |
+| 实时推送 | SSE（Server-Sent Events，各模块独立刷新）|
+| 定时任务 | node-cron |
+
+### 数据库（独立库：dongjianyuan_db）
+
+| 表名 | 说明 |
+|------|------|
+| admin_users | 管理员账户 |
+| earthquake_intl | 国际地震（USGS）|
+| earthquake_dom | 国内地震（CENC）|
+| news_cache | 新闻缓存（BBC / 新华社）|
+| gold_forecast | 黄金走势分析 |
+| climate_alerts | 极端气候预警 |
+
+### 7 个子模块（均独立 SSE 刷新，不刷新主页面）
+
+| 模块 | 数据源 | 刷新频率 |
+|------|--------|---------|
+| 🔍 搜索 | Brave Search API | 实时 |
+| 🌍 国际地震 | USGS | 每5分钟 |
+| 🇨🇳 国内地震 | CENC（中国地震台网）| 每5分钟 |
+| 📰 国际新闻 | BBC RSS | 每4小时 |
+| 🏛️ 国内新闻 | 新华社 | 每4小时 |
+| 🌪️ 极端气候 | Brave 搜索权威源 | 每2小时 |
+| 💰 黄金走势 | Brave + AI 分析 | 每日 8:00 |
+
+### 登录凭证
+
+| 字段 | 值 |
+|------|------|
+| 用户名 | admin |
+| 密码 | Admin@123456 |
+
+### 核心 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /api/auth/login | 登录 |
+| PUT | /api/auth/change-password | 修改密码（验旧密码）|
+| GET | /api/earthquake/international | 国际地震 |
+| GET | /api/earthquake/domestic | 国内地震 |
+| GET | /api/news/international | 国际新闻 |
+| GET | /api/news/domestic | 国内新闻 |
+| GET | /api/climate/alerts | 极端气候 |
+| GET | /api/financial/gold-forecast | 黄金走势 |
+| POST | /api/search | Brave 搜索 |
+| GET | /api/sse/:module | SSE 实时推送 |
+
+### 启动命令
+
+```bash
+# 后端
+cd ~/projects/tiandao_dongjianyuan/backend && node src/index.js
+
+# 前端
+cd ~/projects/tiandao_dongjianyuan/frontend && npm run dev
+```
+
+### 状态
+
+- **后端**：✅ 运行中（3014）
+- **前端**：✅ 运行中（3012）
+- **数据库**：✅ dongjianyuan_db 已创建
+- **文档**：`docs/TECHNICAL_PROPOSAL_v1.2.md`
+
+---
+
+_最后更新：2026-04-22（新增洞鉴院 tiandao_dongjianyuan）_

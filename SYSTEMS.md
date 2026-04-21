@@ -127,7 +127,6 @@
 
 | 进程名 | 脚本 | 职责 | 状态 |
 |--------|------|------|------|
-| session-extractor | session-file-extractor-loop.js | 会话文件扫描提取 | stopped（待恢复）|
 | session-summary-extractor | session-summary-extractor.js | Session摘要Daemon | online |
 | graph-linker | graph-linker.js | Redis Stream → Neo4j | online |
 | outbox-writer | outbox-writer.js | Outbox模式写入 | online |
@@ -1153,7 +1152,7 @@ cd ~/.config && git add . && git commit -m "描述"
 |------|------|
 | 4G语音v2 | ✅ 运行中 |
 | 远程录音 | ✅ 运行中 |
-| 记忆系统 | ✅ 运行中（6/6进程）|
+| 记忆系统 | ✅ 运行中（7/7进程，session-extractor 已移除）|
 | 三层记忆追溯 | ✅ 已创建 |
 | 自我监控 | ✅ 运行中 |
 | 邮件系统 | ✅ 正常 |

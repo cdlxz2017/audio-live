@@ -57,417 +57,410 @@
 - **适用场景**：摘要 → 原始对话追溯、核实决策背景、审计对话记录
 - **状态**：✅ 已创建
 
-### 记忆系统
-- **触发词**：记忆系统、检查记忆、health check、数据链路、召回系统
-- **使用**：
-  ```bash
-  node /home/ai/.openclaw/workspace/memory-system/scripts/health-check.js
-  node /home/ai/.openclaw/workspace/memory-system/scripts/system-deep-inspector.js
-  ```
-- **包含**：session-summary-extractor（Session级摘要Daemon，10分钟扫描）、session-extractor、graph-linker、outbox-writer、graphify-opus-manager
-- **端口**：18789（Gateway）/ 31234（Graphify Query）
-- **版本**：v4.5+（新Session摘要召回 + Session级摘要Daemon：2026-04-16，**2026-04-17已部署daemon**）
-- **状态**：⚠️ 链路重建完成（2026-04-21 07:15）
-  - 重建目录：`/home/ai/.openclaw/workspace/memory-system-rebuild/`
-  - 报告：`memory-system-rebuild/REBUILD_REPORT.md`
-  - **召回链路 ✅ 完全可用**：P99=66ms，5/5 查询通过
-  - **写入链路**：memory_summaries ✅ / personal_memories ✅ / memories ⚠️ constraint缺失 / conversation_messages ⚠️ schema不匹配
-  - 原 memory-system：`/home/ai/.openclaw/workspace/memory-system/`（暂停，不受影响）
-  - 副脑 Problem Thread：✅ 未受影响（7条 Thread 完整）
-- **说明**：2026-04-20发现summary-extractor入口文件丢失（从未git commit，文件系统误删），导致565,879次crash重启。已停止该进程，由session-summary-extractor单一提取器承载全部摘要写入任务（避免重复写入）
+### 主脑（记忆链路系统）
 
-#### Session级摘要系统（session-summary-extractor）
+> **⚠️ 绝对禁区**：未经主人灵须子明确授权，不得对主脑任何组件进行任何操作。
+> 详见 MEMORY.md「主脑保护铁律」。
 
-> **文件**：`memory-system/scripts/session-summary-extractor.js`
-> **PM2进程**：`session-summary-extractor`（Daemon模式，每10分钟扫描）
-> **特点**：整个Session全文提取 → 分段 → 并行LLM → 合并摘要，完整率>90%
+#### 一、定位与架构
+
+主脑是玄枢（主脑）的核心记忆引擎，负责在每次对话前自动召回相关记忆并注入到 LLM prompt 上下文中。
 
 
-**backfill命令**（手动重新处理某Session）：
-```bash
-node /home/ai/.openclaw/workspace/memory-system/scripts/session-summary-extractor.js --backfill
-```
 
-**监控命令**：
-```bash
-pm2 logs session-summary-extractor --nostream --lines 20
-```
+#### 二、数据链路详解
 
-**关键指标**（2026-04-16实测）：
-- 最大Session处理：2780条消息 / 459K token / 72段 / ~15分钟
-- LLM重试率：**0%**（qwen3.6-plus一次成功率100%）
-- 每段耗时：~10-20秒
-- 向量召回相似度：0.68-0.78（语义相关）
+**链路A：消息捕获**
 
-#### 记忆系统 — 数据链路一览（完整版）
 
-| 链路 | 路径 | 说明 | 状态 |
-|------|------|------|------|
-| **L0** | OpenClaw Gateway → recall hook | before_prompt_build 触发 recall hook | ✅ |
-| **L1** | Session JSONL → conversation_messages | session-extractor PM2 轮询 JSONL 文件 | ✅ 畅通 |
-| **L2** | conversation_messages → memory_summaries | session-summary-extractor 全Session分段并行提取 | ✅ 畅通 |
-| **L3** | memory_summaries → summary_message_links | 迁移脚本一次性写入（604条历史关系） | ✅ 完成 |
-| **L4** | session-summary-extractor → memory_outbox | Outbox Pattern：事务双写（memory_summaries + memory_outbox）| ✅ |
-| **L5** | memory_outbox → personal_memories | outbox-writer PM2 每10秒消费 pending 事件 | ✅ |
-| **L6** | memory_outbox → Neo4j PersonalMemory | outbox-writer 异步写入 Neo4j | ✅ |
-| **L7** | session-extractor → personal_memories | 直接写入（主写入路径）| ✅ 主要来源 |
-| **L8** | Redis Stream → graph-linker → Neo4j | graph-linker PM2 消费 graph:sync:events | ✅ |
-| **L9** | 用户消息 → recall hook → session-recall | recall hook → session-recall.js → pgvector HNSW 召回 | ✅ |
-| **L10** | recall hook → cascadeRecall | 三级级联召回（新增 v4.4）| ✅ |
-| **L11** | get-summary-sources 追溯接口 | get-summary-sources.js 双向追溯（summary↔message）| ✅ |
-| **L12** | 端到端追溯链（Trace Chain） | trace_chain 表：每步打卡，实时监控 | ✅ 2026-04-20 新建 |
+**链路B：记忆写入**
 
-#### 自学习记忆引擎（v1.0 — 2026-04-20）
 
-**四条数据链**：
+**链路C：摘要提取**
 
-| 链 | 状态 | 说明 |
-|-----|------|------|
-| 第一条：置信度→研究触发 | ✅ 修复 | learning-trigger 触发 → active-researcher 执行 |
-| 第二条：learned→recall | ✅ 修复 | cron 每30分钟导入 memory/learned → memory_summaries |
-| 第三条：feedback 写入 | 🔧 待启用 | 需要 Telegram inline button 配合（recall-hook 不改） |
-| 第四条：自适应权重 | ⏳ 待构建 | 依赖 feedback 数据积累后自动调整 intent 权重 |
 
-**核心组件**：
+**链路D：召回（核心）**
 
-| 组件 | 文件 | 职责 |
+
+**链路E：Redis Stream**
+
+
+**链路F：副脑 Problem Thread**
+
+
+#### 三、数据库表手册
+
+| 表名 | 存储内容 | 关键字段 | 索引 |
+|------|---------|---------|------|
+| **memories** | 结构化记忆 | id/tenant_id/user_id/entity/attribute/value/embedding/memory_type/confidence/is_active | HNSW(embedding) / (tenant_id,session_id,message_index,entity,attribute) UNIQUE |
+| **memory_summaries** | LLM摘要 | id/summary/summary_type/embedding/source_session_id/confidence/content_hash | HNSW(embedding) / created_at DESC |
+| **personal_memories** | 原始内容 | id/content/category/embedding/origin_session_id/confidence | HNSW(embedding) / category / created_at DESC |
+| **conversation_messages** | 会话消息 | id/session_id/turn_index/role/content/channel/metadata | (session_id,turn_index,role) UNIQUE |
+| **recall_logs** | 召回日志 | id/query_text/query_embedding/recalled_ids/scores/latency_ms/intent/feedback | (tenant_id,created_at) / intent |
+| **conversation_sessions** | 会话元数据 | id/session_key/title/topics/l0_summary/l1_summary | PRIMARY KEY(id) |
+| **summary_message_links** | 摘要-消息关联 | summary_id/message_id | PRIMARY KEY(summary_id,message_id) |
+| **session_summary_cursor** | 摘要提取游标 | session_id/last_message_id/last_extracted_at | PRIMARY KEY(session_id) |
+
+#### 四、脚本地图
+
+| 脚本 | 职责 | 链路 |
 |------|------|------|
-| 置信度评估 | `scripts/learning-trigger.js` | confidence < 0.55 触发后台研究 |
-| 主动研究 | `scripts/active-researcher.js` | DeepSeek-Chat + Brave Search 研究，结果存 memory/learned/ |
-| learned 导入 | `scripts/import-learned-to-summaries.js` | cron 每30分钟将 learned 导入 memory_summaries |
-| feedback 写入 | `scripts/record-feedback.js` | 外部反馈写入 recall_logs.feedback（CLI 模式）|
-| 监控面板 | `scripts/learning-engine-monitor.js` | 四条数据链健康度监控 |
+|  | 捕获消息写入 conversation_messages | 链路A |
+|  | before_prompt_build 召回入口 | 链路D |
+|  | 召回服务：三表HNSW + 意图分类 + 排序 | 链路D |
+|  | 记忆写入：memories/memory_summaries/personal_memories | 链路B |
+|  | Session级摘要Daemon | 链路C |
+|  | 会话文件轮询提取 | 链路B |
+|  | Redis Stream → Neo4j 图谱同步 | 链路E |
+|  | BGE-m3 Ollama 向量嵌入 | 链路D |
+|  | Redis 连接：Stream + 缓存 | 链路D/E |
+|  | PostgreSQL 连接池 | 全链路 |
+|  | 全局配置 | 全链路 |
+|  | Proactive 上下文加载 | 链路D |
+|  | Graphify 代码对齐 | 链路D |
+|  | 模块E：冷存储激活 | 链路D后 |
+|  | 模块F：推理模式 | 链路D后 |
+|  | 模块D：置信度检测触发 | 链路D后 |
+|  | 模块D：后台主动研究 | 链路D后 |
 
-**使用方式**：
+#### 五、PM2 进程
 
-1. **自动触发**：recall hook 检测到置信度 < 0.55，自动触发 active-researcher 后台研究
-2. **手动检查**：
-   ```bash
-   # 监控四条数据链
-   node memory-system/scripts/learning-engine-monitor.js
-
-   # 手动触发研究（测试用）
-   node memory-system/scripts/active-researcher.js --query "什么是MCP" --concept "MCP协议" --confidence 0.4
-
-   # 手动写入 feedback（测试用）
-   node memory-system/scripts/record-feedback.js --query "MCP是什么" --feedback 1 --sender telegram:8707975769
-   ```
-3. **监控 cron**：每10分钟检查，异常时记录到副脑 Thread |
-
-**Cron 任务**：
-- `*/30 * * * *` — 将 memory/learned 导入 memory_summaries
-- `*/10 * * * *` — 同步监控状态到副脑 Thread
-- `0 9 * * *` — 每日检查 skill 更新，生成报告并邮件通知 |
-
-**触发词**：学习引擎 / 自学习 / 记忆引擎 / learning |
-
-
-#### 召回系统架构（v4.4 — Week 3 完成）
-
-**核心组件**：
-
-| 组件 | 文件 | 职责 |
-|------|------|------|
-| Recall Hook | `hooks/recall-hook/handler.js` | before_prompt_build 入口，三级路由 |
-| Finish Summary Hook | `hooks/finish-summary-hook/handler.js` | 拦截「完成摘要」，生成结构化摘要并存入 memory_summaries |
-| Git post-commit hook | `~/.git-templates/hooks/post-commit` | Git commit 完成后自动对当前最新 session 生成摘要 |
-| RecallService | `scripts/session-recall.js` | 两套召回：普通 recall + cascadeRecall 级联 |
-| Config | `scripts/config.js` | 意图配置 + cascadeRecallConfig |
-| Graphify Fetch | `scripts/graphify-fetch.js` | 代码图谱对齐（已修复 node.id）|
-| Redis Module | `scripts/redis.js` | 缓存 + invalidateRecallCache |
-| Embedder | `scripts/embedder.js` | BGE-m3 Ollama 向量嵌入 |
-| Session Context | `scripts/session-context-loader.js` | Session 管理 + Proactive |
-
-**召回流程**：
-
-```
-用户消息
-  │
-  ▼
-[before_prompt_build] handler.js 触发
-  │
-  ▼
-classifyIntent() → 8类意图
-  │
-  ├── TECHNICAL/PROJECT/REASONING → shouldGraphify = true
-  └── 其他 → shouldGraphify = false
-  │
-  ▼
-级联路由判断（shouldCascade）
-  ├── 触发关键词：'上次'、'之前说过'、'我记得'、'继续'、'接着'
-  ├── 话题切换 + query ≥ 4字
-  └── 强制刷新（长时间沉默）
-  │
-  ├── YES → cascadeRecall 三级召回
-  │   ├── Phase1: memory_summaries + 3h时间窗口（HNSW）
-  │   ├── Phase2: 摘要关键词 → memories entity 匹配
-  │   └── Phase3: summary_message_links → conversation_messages 溯源
-  │
-  └── NO → 普通 recall
-      ├── HNSW 三表并行（memories / memory_summaries / personal_memories）
-      ├── 动态加权排序（语义 + 时间衰减 + 置信度）
-      ├── importance_score ≥ 5 过滤（personal_memories）
-      └── Graphify 代码上下文（仅 TECHNICAL/PROJECT/REASONING）
-  │
-  ▼
-buildMemoryPrompt() → prependContext 注入 LLM
-  │
-  ▼
-[after_response] → 后台异步任务（Promise.allSettled）
-```
-
-**意图配置（8类）**：
-
-| 意图 | Graphify | Tier | 半衰期 |
-|------|----------|------|--------|
-| TECHNICAL | ✅ | 1 | 4h |
-| PROJECT | ✅ | 1 | 4h |
-| REASONING | ✅ | 2 | 2h |
-| FACTUAL | ❌ | 1 | 2h |
-| PREFERENCE | ❌ | 1 | 8h |
-| EVENT | ❌ | 1 | 0.5h |
-| PERSON | ❌ | 1 | 4h |
-| DEFAULT | ❌ | 1 | 2h |
-
-**实时监控（v1.0 — 2026-04-20）**：
-```bash
-# 每5分钟采集一次
-node memory-system/scripts/recall-live-monitor.js
-
-# 带告警模式（异常则exit 1）
-node memory-system/scripts/recall-live-monitor.js --alert
-```
-
-**监控指标**：
-- 5分钟窗口调用量
-- 延迟 P50/P90/P95/P99
-- 意图分布 / 来源分布
-- 无结果召回率
-
-**Cron**：`*/5 * * * *`（每5分钟，已加入 crontab）
-
-**已知问题修复（2026-04-20）**：
-- ✅ Graphify 对齐 bug：`extractAlignedIds()` 改用 `alignedMemories[].id`（不再用 `node.id`）
-- ✅ TECHNICAL 正则关键词扩充（+18个技术词汇 + ollama/bge-m3/keep_alive/session/会话）
-- ✅ Redis 缓存工作正常（TTL 5分钟，hit 时输出 Cache HIT）
-
-**级联召回配置**：
-
-```javascript
-cascadeRecallConfig: {
-  enabled: true,
-  triggerKeywords: ['上次', '之前说过', '我记得', '上次聊', '继续', '接着'],
-  minQueryLength: 4,
-  defaultTimeWindow: 3,  // 小时
-}
-```
-
-#### latest_summaries_cache — 最新5条摘要滚动缓存
-> **B2方案**：新建专用表 `latest_summaries_cache`，每次摘要创建后自动写入，维护最新5条
-> **写入钩子**：`session-summary-extractor.js` → `_cacheLatestSummary()`
-> **维护策略**：INSERT后立即DELETE淘汰最旧条，保留created_at最新的5条
-
-| 字段 | 说明 |
-|------|------|
-| `summary_id` | 关联 memory_summaries.id |
-| `query_keywords` | 从摘要提取的合成关键词 |
-| `summary_preview` | 前120字预览 |
-| `summary_full` | **完整摘要**（主人要求）|
-| `summary_type` | 类型：factual/decision/event/preference |
-| `created_at` | 滚动窗口排序依据 |
-
-**查询命令**：
-```bash
-PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
-  "SELECT id, summary_id, left(summary_preview,80), summary_type, created_at FROM latest_summaries_cache ORDER BY created_at DESC;"
-```
-
----
-
-#### 关键表数据量（2026/4/19 22:12 更新）
-
-| 表 | 数量 | 说明 |
-|----|------|------|
-| conversation_messages | **80** | 原始对话存档 |
-| memory_summaries | **3** | 摘要（v4.5+ Session级）|
-| memories | **3** | 结构化 entity/attr/value（content 填充率 100%）|
-| personal_memories | **48** | 主记忆 |
-| summary_message_links | 604 | 摘要↔消息 junction table |
-| recall_logs | **22** | 召回日志 |
-| latest_summaries_cache | **5** | 最新5条摘要滚动缓存（B2方案）|
-| graphify_code_embeddings | **80364** | 代码图谱节点 |
-| memory_outbox | **1143** | ⚠️ 有待消费 |
-| session_summary_cursor | **38** | Session级摘要进度跟踪 |
-| memory_snapshots | **14** | 历史快照 |
-| trace_chain | **0** | 端到端追溯（2026-04-20 新建） |
-
-#### 数据库快照表（方案二 — 长期可观测）
-
-> **表名**：`memory_snapshots`
-> **写入方**：`health-check.js`（每次巡检自动写入）
-> **用途**：SYSTEMS.md 数据量手动更新容易滞后，数据库快照提供时序可观测性，支持历史趋势查询
-
-**查询命令**：
-```bash
-# 查看最新快照
-PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
-  "SELECT snapshot_time, conversation_messages, personal_memories, memory_summaries, session_summary_cursor FROM memory_snapshots ORDER BY snapshot_time DESC LIMIT 1;"
-
-# 查看历史趋势（最近N条）
-PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
-  "SELECT snapshot_time, conversation_messages, personal_memories, memory_summaries FROM memory_snapshots ORDER BY snapshot_time DESC LIMIT 10;"
-
-# 计算两次快照之间的增长量
-PGPASSWORD=zyxrcy910128 psql -h localhost -U openclaw_ai -d openclaw_memory -c \
-  "SELECT (personal_memories - LAG(personal_memories) OVER (ORDER BY snapshot_time)) as growth FROM memory_snapshots ORDER BY snapshot_time DESC LIMIT 10;"
-```
-
-**表结构**：
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | SERIAL | 主键 |
-| snapshot_time | TIMESTAMPTZ | 快照时间 |
-| conversation_messages | INT | 对话存档条数 |
-| memories | INT | 结构化记忆条数 |
-| memories_content_fill_rate | FLOAT | content字段填充率 |
-| personal_memories | INT | 主记忆条数 |
-| memory_summaries | INT | 摘要条数 |
-| recall_logs | INT | 召回日志条数 |
-| session_summary_cursor | INT | Session摘要进度 |
-| personal_memory_nodes | INT | Neo4j PersonalMemory节点数 |
-| graphify_code_nodes | INT | Neo4j GraphifyCode节点数 |
-| aligned_relationships | INT | 对齐关系数 |
-| memory_summary_nodes | INT | Neo4j Memory_summary节点数 |
-| personal_entity_nodes | INT | Neo4j PersonalEntity节点数 |
-| redis_graph_sync_len | INT | Redis Stream graph:sync 长度 |
-| redis_latency_ms | INT | Redis延迟（ms）|
-
-**状态**：✅ 运行中（5条快照记录，最早 2026-04-16 20:03）
-
-#### PM2 进程清单（2026-04-17 核实）
-
-| 进程 | 职责 | 状态 |
-|------|------|------|
-| session-summary-extractor | Session级摘要Daemon（每5分钟扫描，已部署）| ✅ online（v4.5+，daemon）|
-| session-extractor | JSONL → conversation_messages | ✅ online |
-| outbox-writer | memory_outbox → personal_memories + Neo4j | ✅ online |
-| graph-linker | Redis Stream → Neo4j ALIGNED_TO | ✅ online |
-| graphify-opus-manager | Graphify 代码节点管理 | ✅ online |
-| hermes-server | 玄一推理服务（端口31235）| ✅ online |
-| hermes-web | 玄一 Web 服务（端口31236）| ✅ online |
-| cowrie-tianxing | 蜜罐攻击IP → 天刑扫描 | ✅ online |
-
-#### EXEC 改动清单（Week 1-3 完成记录）
-
-| EXEC | 改动 | 危险点 | 状态 |
-|------|------|--------|------|
-| EXEC-001 | shouldGraphify 配置驱动 | P0-1 | ✅ |
-| EXEC-002 | config.js 非技术意图 graphify=false | P0-1配套 | ✅ |
-| EXEC-003 | extractAlignedIds node.id 修复 | P1-1 | ✅ |
-| EXEC-004 | setImmediate → Promise.allSettled | P0-2 | ✅ |
-| EXEC-005 | _vectorSearchSummaries + recentHours | P1-2 | ✅ |
-| EXEC-006 | invalidateRecallCache 新增 | P1-3 | ✅ |
-| EXEC-007 | recall_logs user_id→nullable + sender_id_text | P1-4 | ✅ |
-| EXEC-008 | _vectorSearchMemories + entities 参数 | P1-5 | ✅ |
-| EXEC-009 | TECHNICAL 正则扩展中文技术词汇 | P2-1 | ✅ |
-| EXEC-010 | cascadeRecall() 三级管道（核心）| P0-3 | ✅ |
-| EXEC-011 | personal_memories importance_score ≥ 5 过滤 | P2-2 | ✅ |
-| EXEC-012 | 动态 candidateK 分配 | P2-3 | ✅ |
-| EXEC-013 | cascadeRecall 路由逻辑 | P0-3配套 | ✅ |
-
-#### 新Session摘要召回（EXEC-NEW-01~05）
-
-> **版本**：v4.5（2026-04-16）
-> **Git Commit**：`2ccc0b4 feat(recall): Week1-3 EXEC全部完成 + 新Session摘要召回方案`
-
-**核心改进**：新 Session 冷启动时，用上一条 Session 的 `conversation_sessions.summary` 作为 recall query，替代随机 query 池。
-
-**修复的危险点**：
-
-| 危险点 | 根因 | EXEC | 状态 |
+| 进程名 | 脚本 | 职责 | 状态 |
 |--------|------|------|------|
-| P0-1：`markSessionForUser` 在 `loadPreviousContext` 之前调用 | Redis key 被覆盖，永远查到当前 session | EXEC-NEW-01 | ✅ |
-| P0-2：subagent/cron session 污染 | 每次事件都标记，覆盖用户 session | EXEC-NEW-01 | ✅ |
-| P1-3：summary 为空或极短 | 无有效检查直接用作 query | EXEC-NEW-03 | ✅ |
-| P1-4：Redis 与 DB 数据不一致 | Redis miss 时无 DB fallback | EXEC-NEW-02 | ✅ |
-| P2-5：query 过长稀释向量搜索 | 无截断直接作为 query | EXEC-NEW-03 | ✅ |
-| P1-7：时间间隔过长导致记忆过时 | 无陈旧检测 | EXEC-NEW-03 | ✅ |
+| session-extractor | session-file-extractor-loop.js | 会话文件扫描提取 | stopped（待恢复）|
+| session-summary-extractor | session-summary-extractor.js | Session摘要Daemon | online |
+| graph-linker | graph-linker.js | Redis Stream → Neo4j | online |
+| outbox-writer | outbox-writer.js | Outbox模式写入 | online |
+| graphify-opus-manager | start-opus-manager.js | Graphify代码管理 | online |
 
-**新 Session 召回流程（v4.5）**：
+#### 六、Hook 事件流
 
-```
-新 session 到来
-  │
-  ▼
-loadPreviousContext()     ← ✅ 先执行（在 markSessionForUser 之前）
-  │
-  ▼
-markSessionForUser()      ← ✅ 后执行（仅主会话，排除 subagent/cron）
-  │
-  ▼
-preloadMemoriesForNewSession()
-  │
-  ├── getLastUserSessionSummary()  ← 新增
-  │   ├── Redis优先：session:summary:{sessionKey}
-  │   └── DB兜底：conversation_sessions.summary
-  │
-  ├── truncateSummaryForQuery(150字符)  ← 新增（在标点处截断）
-  │
-  ├── isSessionStale(>48h)  ← 新增（陈旧则扩大召回范围）
-  │
-  └── fallback → 随机 query 池（summary无效时）
-```
+| 事件 | 触发时机 | 脚本 |
+|------|---------|------|
+| before_message_write | 消息写盘前 | session-capture-hook → conversation_messages |
+| before_prompt_build | LLM调用前 | recall-hook → RecallService → 注入记忆 |
+| after_response | LLM响应后 | recall-hook后处理：评分更新/置信度检测 |
 
-**新增配置项（config.js proactive）**：
+#### 七、副脑 Problem Thread
 
-```javascript
-proactive: {
-  maxSummaryQueryLen: 150,     // summary最大长度
-  minSummaryQueryLen: 30,      // summary最小有效长度
-  maxSessionAgeHours: 48,      // session陈旧阈值
-}
-```
-
-**新增函数**：
-
-| 函数 | 文件 | 说明 |
+| 服务 | 端口 | 说明 |
 |------|------|------|
-| `getLastUserSessionSummary()` | session-context-loader.js | Redis优先 + DB兜底获取上一条用户session summary |
-| `loadPreviousContext()` | session-context-loader.js | **直接查 memory_summaries 表**（绕过 Redis summary=null 问题，2026-04-16）|
-| `truncateSummaryForQuery()` | session-context-loader.js | 在标点处智能截断summary |
-| `isSessionStale()` | session-context-loader.js | 判断session是否陈旧(>48h) |
+| Problem Thread API | 54321 | 独立 Docker，7条 Thread 完整 |
+| pt-postgres | 54320 | 独立数据库，problem_threads 表 |
+| pt-neo4j | 7688 | 关系图谱 |
 
-#### 文档索引
+**API端点**：
+-  — 列出 threads
+-  — 新建 thread
+-  — 追加 Stage
+-  — 更新状态
+-  — 推送 session 摘要
 
-| 文档 | 路径 |
-|------|------|
-| 召回系统设计 | `docs/RECALL-DESIGN.md` |
-| 深度分析报告 | `docs/RECALL-DEEP-ANALYSIS-FINAL.md` |
-| 执行方案（Week1-3）| `docs/RECALL-EXECUTION-PLAN.md` |
-| 测试报告 | `docs/RECALL-TEST-REPORT.md` |
-| 数据链文档 | `docs/RECALL-DATA-CHAIN.md` |
-| Session摘要召回方案 | `docs/RECALL-SESSION-SUMMARY-EXEC-PLAN.md` |
+#### 八、Redis 数据结构
 
-#### graph-linker 状态监控
-- **触发词**：graph-linker 状态、graph-linker 积压、graph-linker 速度、graph-linker 消费
-- **使用**：
-  ```bash
-  node /home/ai/.openclaw/workspace/custom-skills/graph-linker-monitor/check-graph-linker.js
-  ```
-- **输出**：Stream 概况 / Consumer 状态 / 积压分析 / 速率分析 / 预估时间
-- **状态**：✅ 正常运行
+| Key/Stream | 类型 | 生产者 | 消费者 | 说明 |
+|-----------|------|--------|--------|------|
+|  | Stream | memory-writer / summary-extractor | graph-linker | 图谱同步事件 |
+|  | Stream | session-summary-extractor | memory-workers | 消息流 |
+|  | String | recall-service | recall-service | 召回缓存，TTL=300s |
+|  | String | recall-hook | recall-hook | 上下文已加载标记，TTL=24h |
+|  | String | recall-hook | recall-hook | Proactive已加载标记，TTL=24h |
 
-#### graph-linker 状态监控
-- **触发词**：graph-linker 状态、graph-linker 积压、graph-linker 速度、graph-linker 消费
-- **使用**：
-  ```bash
-  node /home/ai/.openclaw/workspace/custom-skills/graph-linker-monitor/check-graph-linker.js
-  ```
-- **输出**：Stream 概况 / Consumer 状态 / 积压分析 / 速率分析 / 预估时间
-- **状态**：⚠️ 修复中（xlen方法调用错误）
+#### 九、意图分类（8类）
 
----
+| 意图 | 触发关键词示例 | 召回表优先级 | 半衰期 |
+|------|-------------|------------|--------|
+| TECHNICAL | 代码、bug、api、docker、pm2、hook | memories > summaries > personal | 4h |
+| PROJECT | 项目、进度、milestone、计划 | summaries > memories > personal | 4h |
+| REASONING | 为什么、分析、推理、原因 | summaries > memories > personal | 2h |
+| FACTUAL | 是什么、定义、解释 | summaries > memories > personal | 2h |
+| PREFERENCE | 喜欢、偏好、习惯 | personal > summaries > memories | 8h |
+| EVENT | 昨天、上次、会议、发生 | personal > summaries > memories | 0.5h |
+| PERSON | 谁、联系人、团队 | personal > summaries > memories | 4h |
+| DEFAULT | 其他 | summaries > memories > personal | 2h |
 
+#### 十、关键配置
+
+
+
+#### 十一、测试命令
+
+
+════════════════════════════════════════════════════════════════
+  记忆系统健康检查 2026/4/21 07:36:38
+════════════════════════════════════════════════════════════════
+
+【PM2 进程】
+  ✅ session-extractor: online | 运行 35min
+     脚本: session-file-extractor-loop.js
+  ✅ session-summary-extractor: online | 重启 4 次 | 运行 51min
+     脚本: session-summary-extractor.js
+  ✅ outbox-writer: online | 重启 1 次 | 运行 63min
+     脚本: outbox-writer.js
+  ✅ graph-linker: online | 重启 1 次 | 运行 63min
+     脚本: graph-linker.js
+  ✅ graphify-opus-manager: online | 运行 1044min
+     脚本: start-opus-manager.js
+  ✅ hermes-server: online | 运行 1044min
+     脚本: hermes_server.py
+  ✅ hermes-web: online | 运行 1044min
+     脚本: server.js
+  ✅ cowrie-tianxing: online | 运行 1044min
+     脚本: cowrie-to-tianxing.sh（攻击IP→天刑扫描）
+
+【基础设施】
+[DB] New client connected
+  ✅ PostgreSQL
+  ✅ Neo4j
+  ✅ Redis (延迟: 15ms, 内存: 2.05M, graph:sync长度: 5)
+  ✅ Ollama (bge-m3: huihui_ai/gemma-4-abliterated:e2b, bge-m3:latest)
+
+【玄一 Services】
+  ✅ hermes-server (31235): ok | sessions: 0 | 延迟: 3ms
+  ✅ hermes-web (31236): ok | 延迟: 2ms
+
+【session-extractor】(文件扫描 → 对话存档+记忆提取)
+  ⚠️ conversation_messages: 近1h +80 条 | 总 80 条 (+80条)
+  ⚠️ memories: 近1h +3 条 | 总 3 条 (+3条)
+     ⚠️ memories 表总量过少 (<100)，请检查 LLM 提取是否正常
+
+【graph-linker】(PersonalMemory → Neo4j 图关联)
+  ✅ PersonalMemory 节点: 2506 (+0节点)
+     PersonalMemory → PersonalEntity 关系: 6950
+     PersonalEntity 节点: 3
+
+【graphify-opus-manager】(代码图谱 → GraphifyCode + Neo4j 对齐)
+  ✅ 整体状态: healthy (来自 manager 日志)
+  ✅ collection 层: running
+  ✅ bridge 层: running
+  ✅ query 层: running (端口 31234)
+     query uptime: 1044min | 查询量: 25 | 失败: 7 | 缓存命中率: 8.0%
+
+  ✅ GraphifyCode 节点: 80420 (+0)
+     ALIGNED_TO 关系: 36831 (+0)
+     Memory_summary 节点: 113
+     PersonalEntity 节点: 3
+
+【熔断器】
+  ✅ 整体: 全部关闭
+  ✅ llm_extraction: CLOSED
+  ✅ vector_search: CLOSED
+  ✅ neo4j_sync: CLOSED
+  ✅ postgres: CLOSED
+  ✅ redis: CLOSED
+  ✅ neo4j: CLOSED
+
+【蜜罐防御系统 (Cowrie)】
+  ✅ cowrie.service (systemd): active | PID 2296
+  ✅ 端口监听: SSH 2222 / Telnet 2223 ✅
+
+────────────────────────────────────────────────────────────────
+【总结】
+  ⚠️ memories 表总量过少 (<100)，请检查 LLM 提取是否正常
+
+  运行中: 7/7 个进程
+
+════════════════════════════════════════════════════════════════
+
+[DB] New client connected
+[DB] New client connected
+[DB] New client connected
+  [SYSTEMS.md] 数据量快照已更新并提交
+  [DB] 数据快照已写入 memory_snapshots 表
+=== Memory System Health Check ===
+
+PostgreSQL ... ✅ OK (12ms)
+pgvector   ... ✅ OK (v0.8.2)
+Tables     ... ✅ OK — {"memories":3,"memory_summaries":3,"personal_memories":48,"conversation_messages":80,"recall_logs":22}
+HNSW Index ... ✅ OK (3 indexes)
+Redis      ... ✅ OK
+BGE-m3     ... ✅ OK (dim=1024, 70ms)
+主脑 PG    ... ✅ OK (7 threads)
+
+=== Summary ===
+✅ All systems healthy
+{
+  "postgresql": {
+    "ok": true,
+    "latencyMs": 12
+  },
+  "pgvector": {
+    "ok": true,
+    "version": "0.8.2"
+  },
+  "tables": {
+    "ok": true,
+    "counts": {
+      "memories": 3,
+      "memory_summaries": 3,
+      "personal_memories": 48,
+      "conversation_messages": 80,
+      "recall_logs": 22
+    }
+  },
+  "hnsw": {
+    "ok": true,
+    "count": 3,
+    "indexes": [
+      "idx_memories_embedding_hnsw",
+      "idx_memory_summaries_embedding_hnsw",
+      "idx_personal_memories_embedding_hnsw"
+    ]
+  },
+  "redis": {
+    "ok": true
+  },
+  "bge_m3": {
+    "ok": true,
+    "dimensions": 1024,
+    "latencyMs": 70
+  },
+  "pt_postgres": {
+    "ok": true,
+    "threads": 7
+  }
+}
+=== Write Chain Test ===
+
+--- 1. conversation_messages ---
+[capture] written id=1247 role=user session=65f9b737-c46c-400d-90f0-4f42aab15734 len=24
+[capture] written id=1248 role=assistant session=65f9b737-c46c-400d-90f0-4f42aab15734 len=56
+✅ Written: user msg=1247, assistant msg=1248
+
+--- 2. memories ---
+✅ Written: memory id=ae91b571-77ad-46a8-acf3-91f419938294
+
+--- 3. memory_summaries ---
+✅ Written: summary id=3
+
+--- 4. personal_memories ---
+✅ Written: personal memory id=49
+
+--- 5. Redis Stream ---
+✅ graph:sync:events length=6
+
+--- 6. Verification ---
+✅ Row counts: {"memories":3,"memory_summaries":3,"personal_memories":49,"conversation_messages":82}
+
+=== Write Test Summary ===
+✅ All write tests passed
+{
+  "conversation_messages": {
+    "ok": true,
+    "ids": [
+      "1247",
+      "1248"
+    ]
+  },
+  "memories": {
+    "ok": true,
+    "id": "ae91b571-77ad-46a8-acf3-91f419938294"
+  },
+  "memory_summaries": {
+    "ok": true,
+    "id": "3"
+  },
+  "personal_memories": {
+    "ok": true,
+    "id": "49"
+  },
+  "redis_stream": {
+    "ok": true,
+    "graphSyncLength": 6
+  },
+  "verification": {
+    "ok": true,
+    "counts": {
+      "memories": 3,
+      "memory_summaries": 3,
+      "personal_memories": 49,
+      "conversation_messages": 82
+    }
+  }
+}
+=== Recall Chain Test ===
+
+--- 1. Intent Classification ---
+  ⚠️ "记忆系统的状态是什么？" → FACTUAL (expected: TECHNICAL)
+  ⚠️ "上次数据库出了什么问题？" → TECHNICAL (expected: EVENT)
+  ⚠️ "副脑 Problem Thread 的数据还在吗？" → DEFAULT (expected: TECHNICAL)
+  ⚠️ "重建记忆链路需要哪些步骤？" → DEFAULT (expected: TECHNICAL)
+  ✅ "PostgreSQL HNSW 索引性能如何？" → TECHNICAL (expected: TECHNICAL)
+
+--- 2. Recall Tests ---
+
+  Query: "记忆系统的状态是什么？"
+  Intent: FACTUAL | Cached: false | Latency: 96ms | Results: 5
+    [personal_memories] score=0.6703 sim=0.5432 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.6701 sim=0.5432 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.6701 sim=0.5432 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+
+  Query: "上次数据库出了什么问题？"
+  Intent: TECHNICAL | Cached: false | Latency: 57ms | Results: 5
+    [personal_memories] score=0.7869 sim=0.6634 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.7859 sim=0.6634 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.7858 sim=0.6634 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+
+  Query: "副脑 Problem Thread 的数据还在吗？"
+  Intent: DEFAULT | Cached: false | Latency: 63ms | Results: 5
+    [personal_memories] score=0.7776 sim=0.6460 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.7520 sim=0.6460 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.7500 sim=0.6460 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+
+  Query: "重建记忆链路需要哪些步骤？"
+  Intent: DEFAULT | Cached: false | Latency: 58ms | Results: 5
+    [personal_memories] score=0.7483 sim=0.5972 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.7228 sim=0.5972 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.7208 sim=0.5972 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+
+  Query: "PostgreSQL HNSW 索引性能如何？"
+  Intent: TECHNICAL | Cached: false | Latency: 64ms | Results: 5
+    [memory_summaries] score=0.7031 sim=0.5671 — 用户在 2026-04-21 进行了记忆系统重建，包括 PostgreSQL 表结构重建、HNSW 索引创建、BGE-m3 向量嵌入测试。所有写入链路测试通过。
+    [personal_memories] score=0.6364 sim=0.4485 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+    [personal_memories] score=0.6354 sim=0.4485 — 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需
+
+--- 3. Cache Hit Test ---
+  Second call cached: true
+  ✅ Cache hit confirmed
+
+--- 4. Memory Prompt Build ---
+  Prompt length: 403 chars
+  Preview:
+[Recalled Memories]
+- [system_event] 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需要重建记忆链路系统。 (score: 0.721)
+- [system_event] 主脑 PostgreSQL 在 2026-04-21 05:30 被初始化为空壳，导致记忆数据全部丢失。副脑 Problem Thread 数据完整未受影响。需要重建记忆链路系统。 (score: 0.696)
+- [system_event] 主脑 PostgreSQL 在 2
+
+--- 5. Recall Logs ---
+  ✅ recall_logs count: 29
+
+=== Recall Test Summary ===
+Total queries: 5
+Avg latency: 68ms
+✅ All recall tests passed
+│ 17 │ graph-linker                 │ default     │ 4.0.0   │ fork    │ 2410350  │ 63m    │ 1    │ online    │ 0%       │ 73.2mb   │ ai       │ disabled │
+│ 19 │ session-extractor            │ default     │ 4.0.0   │ fork    │ 2690674  │ 35m    │ 0    │ online    │ 0%       │ 60.0mb   │ ai       │ disabled │
+│ 18 │ session-summary-extractor    │ default     │ 4.0.0   │ fork    │ 2436198  │ 51m    │ 4    │ online    │ 0%       │ 85.5mb   │ ai       │ disabled │
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+     3
+(1 row)
+
+ count 
+-------
+    49
+(1 row)
+
+#### 十二、详细技术报告
+
+完整架构文档：
+
+报告包含：8张表完整字段手册、10个脚本地图、7条链路时序图、PM2进程详解、Hook事件流、Redis数据结构、配置参数。
 ### 记忆完整性自检（Memory Integrity Check）
 - **触发词**：记忆完整性、自检、完整性检查、integrity
 - **脚本**：`memory-system/scripts/memory-integrity-check.js`
@@ -1035,17 +1028,17 @@ capability-graph/
 - **数据隔离**：SQLite（600权限），零侵入Monkey-patch
 - **状态**：✅ 运行中（2026-04-21 05:03）
 
-### 副脑召回监控系统
-- **触发词**：副脑召回监控、副脑监控、pt-monitor、召回报告
+### 主脑召回监控系统
+- **触发词**：主脑召回监控、主脑监控、pt-monitor、召回报告
 - **使用**：`node /home/ai/.openclaw/workspace/audit-scripts/pt-recall-monitor/pt-recall-report.js`
 - **Cron**：每5分钟自动执行
 - **监控指标**：各店召回次数 / P99延迟 / 具体thread ID / 延迟告警阈值500ms
 - **数据隔离**：SQLite（600权限），主脑零影响，完全独立
 - **状态**：✅ 运行中
 
-### 副脑 Thread
+### 主脑 Thread
 
-当前活跃任务记录在 Problem Thread（副脑），API: `http://localhost:54321/threads?status=active`
+当前活跃任务记录在 Problem Thread（主脑），API: `http://localhost:54321/threads?status=active`
 
 ---
 

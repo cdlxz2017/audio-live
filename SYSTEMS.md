@@ -656,6 +656,92 @@ node audit-scripts/audit-monitor.js                         # 监控检查
 
 ---
 
+## 天道成员管理平台（tiandao_members）
+
+- **触发词**：天道成员、成员管理、成员录入、成员目录、tiandao_members
+- **项目路径**：`/home/ai/projects/tiandao-system/tiandao_members/`
+- **Git 仓库**：已初始化（commit e92e560 / 0a61265）
+
+### 访问地址（HTTPS）
+
+| 服务 | 地址 |
+|------|------|
+| **React SPA（推荐）** | https://100.89.109.20:5173/ |
+| 登录页（静态） | https://100.89.109.20:5173/login.html |
+| 主页面（静态） | https://100.89.109.20:5173/dashboard.html |
+| 后端 API | https://100.89.109.20:3010/api |
+| 后端健康检查 | https://100.89.109.20:3010/health |
+
+### 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 前端 | React + Vite（HTTPS）+ 静态 HTML（古风页面） |
+| 后端 | Express.js + Node.js（HTTPS） |
+| 数据库 | PostgreSQL（与主脑共用 localhost:5432）|
+| 认证 | JWT（24h 过期）+ bcrypt |
+| OCR | 阿里云百炼 Qwen3.6-Plus（qwen-vl-plus）|
+| 证书 | 自签发（/backend/cert.pem + key.pem）|
+
+### 数据库表（4张）
+
+| 表名 | 说明 |
+|------|------|
+| admin_users | 管理员账户（id / username / password_hash / title）|
+| members | 成员信息（id / title / name / birthday / lunar_birthday / address / notes / id_card_image）|
+| departments | 部门信息（id / name / parent_id / responsibility / manager_member_id / assistant_member_id）|
+| department_members | 成员-部门多对多关联（member_id / department_id）|
+
+### 核心 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /api/auth/login | 登录 |
+| GET | /api/auth/me | 当前用户信息 |
+| PUT | /api/auth/update-profile | 修改天道称号/用户名 |
+| PUT | /api/auth/change-password | 修改密码 |
+| GET | /api/departments/tree | 部门树（扁平）|
+| GET | /api/members | 全部成员 |
+| POST | /api/members | 创建成员 |
+| PUT | /api/members/:id | 更新成员 |
+| DELETE | /api/members/:id | 删除成员 |
+
+### 成员表单字段规则
+
+| 字段 | 添加时 | 编辑时 |
+|------|--------|--------|
+| 天道称号 | 必填 | 只读 |
+| 姓名 | 扫描只读 | 只读 |
+| 生日 | 扫描只读 | 只读 |
+| 居住地址 | 扫描只读 | 只读 |
+| 农历生日 | 自动换算 | 只读 |
+| 备注 | 选填 | 选填 |
+| 所属部门 | 选填 | 选填 |
+| 身份证图片 | 扫描上传 | 显示/删除 |
+
+### PM2 进程
+
+| 进程 | 端口 | 说明 |
+|------|------|------|
+| tiandao_members 前端 | 5173（HTTPS） | Vite dev server |
+| tiandao_members 后端 | 3010（HTTPS） | Express API |
+
+### 登录凭证
+
+| 字段 | 值 |
+|------|------|
+| 用户名 | admin |
+| 密码 | admin123 |
+| 天道称号 | 天帝 |
+
+### 状态
+
+- **状态**：✅ 运行中
+- **最后提交**：commit 0a61265（2026-04-22 03:28）
+- **文档**：`docs/CHANGELOG.md`
+
+---
+
 ## 邮件系统
 
 - **触发词**：发邮件、发送邮件、测试邮件
@@ -957,6 +1043,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 三层记忆追溯 | ✅ 已创建 |
 | 自我监控 | ✅ 运行中 |
 | 邮件系统 | ✅ 正常 |
+| 天道成员管理平台 | ✅ 运行中（HTTPS 前后端）|
 | 天道·系统 | ✅ 运行中（5服务）|
 | Hermes Agent | ✅ 可用 |
 | Goal Tracker | ✅ 可用 |
@@ -1042,4 +1129,4 @@ capability-graph/
 
 ---
 
-_最后更新：2026-04-20（自学习记忆引擎上线：4条数据链修复+监控+文档）_
+_最后更新：2026-04-22（新增天道成员管理平台 tiandao_members v2.0）_

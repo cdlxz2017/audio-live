@@ -39,22 +39,22 @@
 |--------|------|------|
 | gateway/网关 | `openclaw-gateway.md` | OpenClaw 网关，端口 18789 |
 | 主脑/记忆系统 | `memory-system.md` | 三层记忆 + Neo4j 同步 |
-| 副脑/problem thread | `problem-thread.md` | 问题追踪系统，API 54321 |
+| 主脑/副脑/Thread | `capability-graph/systems/problem-thread.md` | 问题追踪系统，API 54321，9条活跃 Thread |
 | 安全/防火墙 | `security-system.md` | OSSEC + fail2ban + UFW |
 | 民宿/lingyi | `lingyi-cms.md` | 靈一民宿系统，Docker 部署 |
 | 天道系统 | `tiandao-system.md` | 天道微服务，PM2 管理 |
-| Neo4j/图数据库 | `neo4j.md` | 170万+ 节点，主脑+副脑 |
+| Neo4j/图数据库 | `neo4j.md` | 170万+ 节点，主脑+主脑 |
 
 ### 工具（读 `capability-graph/tools/`）
 
 | 关键词 | 文件 | 说明 |
 |--------|------|------|
 | clawteam/团队/多人协作 | `clawteam.md` | 多智能体协同，tmux+git |
-| 数据库/PostgreSQL/pg | `postgresql.md` | 主库 + 副脑库 |
+| 数据库/PostgreSQL/pg | `postgresql.md` | 主库 + 主脑库 |
 | PM2/进程 | `pm2.md` | Node.js 进程管理 |
 | 模型/LLM/路由 | `llm-routing.md` | 大模型可用性与路由策略 |
 | Redis/缓存 | `redis.md` | 缓存 + graph:sync:events Stream |
-| Docker/容器 | `docker.md` | 容器运行时，lingyi/副脑 |
+| Docker/容器 | `docker.md` | 容器运行时，lingyi/主脑 |
 | **凭证/API Key** | `memory/API-KEY-MANAGEMENT.md` | 中央凭证管理系统（Phase 0-5完成） |
 | **操作审计系统** | `memory/AUDIT-SYSTEM-DESIGN.md` | 审计日志（Phase 1 实施中） |
 
@@ -205,6 +205,14 @@
 | Redis | localhost | 6379 | - | - |
 | Neo4j | localhost | 7687 | neo4j | openclaw_neo4j_2026 |
 
+### 告警渠道缺陷（2026-04-21 归档）
+
+**问题**：主脑 PostgreSQL 数据丢失事故中（05:20），WeChat 告警推送失败（curl exit code 7，API 路径/凭证问题），导致主人未收到即时通知。
+
+**影响**：系统自身故障时，WeChat 告警渠道不可用，无法第一时间触达主人。
+
+**状态**：已知，暂未修复。TTS 语音可正常生成，但无法自动推送至 WeChat。
+
 ### 已安装第三方应用
 
 | 应用 | 端口 | 路径 | 用途 |
@@ -241,41 +249,75 @@
 
 ### 项目状态
 
-**阶段**：已部署运行
-**检测脚本**：`memory-system/scripts/health-check.js`（只检查4个在运行的 PM2 进程）
+**阶段**：⚠️ 重建完成（2026-04-21）
+**重建目录**：`memory-system-rebuild/`（独立于原 `memory-system/`）
+**检测脚本**：`memory-system/scripts/health-check.js` + `memory-system-rebuild/scripts/health-check.js`
 
-### 数据流（2026-04-18 修正）
+### 事故记录（2026-04-21 05:30）
+
+**事件**：主脑 PostgreSQL 被 OpenClaw Docker 管理系统重新初始化为空壳（postgres:16-alpine 无 pgvector）
+
+**影响**：
+- memories: 0 条（原有数据全部丢失）
+- memory_summaries: 仅残留 2-3 条
+- personal_memories: 仅残留 7-8 条
+- conversation_messages: 0 条
+- recall_logs: 0 条
+- session-extractor PM2: stopped
+
+**未受影响**：
+- 副脑 Problem Thread（独立 Docker）: ✅ 9条 Thread（3条 in_progress，6条 new）
+- Redis: ✅ 正常
+- Neo4j: ✅ 正常
+- 主脑 PostgreSQL（54320）: ✅ 正常
+
+### 重建方案（2026-04-21 07:00）
+
+**模式**：卓越架构 + Claude Opus 子代理
+**目录**：`/home/ai/.openclaw/workspace/memory-system-rebuild/`
+**报告**：`memory-system-rebuild/REBUILD_REPORT.md`
+
+**核心验证结果**：
+- ✅ PostgreSQL + pgvector HNSW: 正常
+- ✅ BGE-m3 embedding: 正常（79ms，1024维）
+- ✅ Redis Stream: 正常（graph:sync:events 有数据）
+- ✅ 召回链路: 5/5 查询通过，P99=66ms
+- ✅ 主脑集成: 连接正常
+
+**待修复**：
+- memories 表 unique constraint 缺失（ON CONFLICT 无法工作）
+- conversation_messages 表结构与数据库已有 schema 不匹配
+
+**修复完成（2026-04-21 07:20）**：
+- ✅ memories unique constraint 重建（添加 tenant_id）
+- ✅ memory-writer.js ON CONFLICT 添加 tenant_id 列
+- ✅ 写入链路全部正常（4/4 表可写）
+- ✅ 召回链路全部正常（P99=81ms）
+- ✅ 报告：`memory-system-rebuild/REBUILD_REPORT.md`
+
+### 数据流（2026-04-21 重建版）
+
+```
 
 ```
 对话消息 → OpenClaw Gateway
-              ├─→ hook: session-capture-hook → PostgreSQL conversation_messages ✅
-              │    ⚠️ 只捕获 user 消息（before_message_write 对 assistant 无效）
-              │                                      ↓
-              │                           30秒轮询: session-file-extractor-loop.js (PM2 #0)
-              │                           --no-llm 跳过LLM提取，只做归档
-              │                                      ↓
-              │                           extractor-file-based.js → A表 ✅
               │
-              ├─→ summary-extractor (PM2 #2) → memory_summaries (实时产出) ❌ **已停止（2026-04-20）：入口文件从未git commit，文件系统丢失，565,879次crash重启后停止，由session-summary-extractor替代**
-              │                                      ↓
-              │               ┌─→ graph:sync:events → graph-linker (Memory_tenantId 节点)
-              │               │
-              │               └─→ 实时同步 → Neo4j PersonalMemory (实时写入) ✅
-              │                                       ↓
-              │                           cron增量同步 (每5分钟兜底) ✅
+              ├─→ before_dispatch hook → conversation_messages (user原始消息) ✅ 实时
               │
-              └─→ graph-linker.js (PM2 #1) → Redis Stream: graph:sync:events → Neo4j ✅
+              ├─→ agent_end hook → conversation_messages (assistant完整回复) ✅ 实时
+              │
+              └─→ session-summary-extractor (PM2) → memory_summaries → outbox-writer → personal_memories + Neo4j ✅
 
-**A表记录（2026-04-18）:**
-- conversation_messages: user=5341, assistant=1213
-- 主session (121b7b7c): user=3496, assistant=460
-- 记忆摘要: 1745条
-- recall_logs: 393条
+**当前数据（2026-04-21）:**
+- conversation_messages: ~161条（持续增长）
+- memory_summaries: 3条（44 sessions pending 重试中）
+- personal_memories: 64条
+- recall_logs: 35条
 
-**已知问题:**
-- before_message_write hook 对 webchat assistant 无效（SessionManager.appendInjectedAssistantMessageToTranscript 绕过了hook）
-- assistant 消息完全依赖 extractor 从 JSONL 文件读取（batch，有30s延迟）
-- 详见: memory-system/docs/SESSION-CAPTURE-ANALYSIS-2026-04-18.md
+**extractor 改造（2026-04-21）:**
+- session-extractor PM2 已删除
+- extractor-file-based.js 禁用 --no-archive --no-personal-memories（插件已接管原始消息）
+- conversation_archiver 写入已禁用
 ```
 
 ### Graphify 实体对齐 + 查询路由（2026-04-09 完成）
@@ -309,7 +351,7 @@
 
 | PM2 | 进程名 | 脚本 | 状态 |
 |-----|--------|------|------|
-| #0 | session-extractor | `session-file-extractor-loop.js` | ✅ 正常，文件扫描 |
+| #0 | session-extractor | `session-file-extractor-loop.js` | ❌ **已删除（2026-04-21）：extractor 禁用，插件接管原始消息写入** |
 | #1 | graph-linker | `graph-linker.js` | ✅ 正常 |
 | #2 | summary-extractor | `summary-extractor-loop.js` | ❌ **已停止（2026-04-20）：入口文件从未git commit，文件系统丢失，565k次crash重启后停止，session-summary-extractor替代** |
 | #3 | tiandao-member | `dist/index.js` | ✅ 运行中 |
@@ -323,10 +365,10 @@
 
 | 表 | 数量 | 说明 |
 |----|------|------|
-| `memories` | 1705 条 | 结构化记忆（entity/attr/value），来自文件扫描路径 |
-| `personal_memories` | 36,772 条 | 原始内容记忆（dialogue占32689条来自session提取，其余各类技术/决策/事件等）|
-| `memory_summaries` | 1874 条+ | session-summary-extractor 实时产出（summary-extractor已于2026-04-20停止）|
-| `conversation_messages` | 1593 条 | 原始对话存档 |
+| `memories` | 0 条 | **已废弃（2026-04-21）**，extractor 禁用后不再写入 |
+| `personal_memories` | 64 条 | outbox-writer 实时写入（来源：memory_outbox）|
+| `memory_summaries` | 3 条（pending 44 sessions 重试中）| session-summary-extractor 从 conversation_messages 提炼 |
+| `conversation_messages` | ~161条 | conversation-capture-plugin 实时写入（原始消息）|
 | `recall_logs` | 21 条 | 召回历史 |
 
 ### 同步游标
@@ -676,4 +718,58 @@ DANGEROUS_PATTERNS 检测：rm -rf、DROP TABLE、shutdown 等危险命令拦截
 **违反视为最高级事故，立即恢复。**
 
 _最后更新：2026-04-18 10:08_
+
+
+---
+
+## 🛡️ 主脑保护铁律（2026-04-21 铭刻，2026-04-22 扩展）
+
+**命名**：玄枢记忆链路系统 = **主脑**
+
+**铁律**：**没有主人灵须子（姚旭）的明确确认，任何操作都不能触碰主脑任何组件。**
+
+| 操作类型 | 示例 | 要求 |
+|---------|------|------|
+| 任何修改 | 改表结构/改脚本/改配置 | 必须主人确认 |
+| 任何删除 | 删除数据/删除文件/删除进程 | 必须主人确认 |
+| 任何新增 | 新建表/新建脚本/新建进程/新建Session | 必须主人确认 |
+| 任何重启 | 重启PM2进程/重启服务 | 必须主人确认 |
+| 任何查询 | SELECT/describe/explain | 仅查看不触发操作，可直接执行 |
+
+**涉及范围**（主脑）：
+- `/home/ai/.openclaw/workspace/memory-system/`
+- `/home/ai/.openclaw/workspace/memory-system-rebuild/`
+- PostgreSQL: openclaw_memory 数据库所有表
+- Redis: memory:messages / graph:sync:events 等 Stream
+- PM2: session-extractor / graph-linker / session-summary-extractor 等进程
+- BGE-m3 Ollama 向量模型及相关配置
+- **Docker 卷**：docker_postgres_data / openclaw-postgres 相关所有 volume
+- **Docker 容器**：openclaw-postgres / openclaw-redis / openclaw-neo4j
+- **Docker 镜像**：postgres / pgvector / redis / neo4j 相关镜像（禁止随意替换）
+- **OpenClaw 内部 Docker 管理系统**：任何触发容器重建/镜像更换的操作
+
+**⚠️ 2026-04-21 事故教训（Docker 容器重建导致数据库清空）**
+
+**根因**：OpenClaw 内部 Docker 管理系统在 04-21 05:12:29 同时重启 openclaw-postgres 和 openclaw-redis，新容器以 `postgres:16-alpine`（无 pgvector）启动，数据库被初始化为空壳，数据全部丢失。
+
+**教训**：Docker 容器重建时若镜像/卷挂载配置不一致，数据会立即清空且不可恢复。铁律必须覆盖到容器层，不能只覆盖数据库层。
+
+**绝对禁止**（无需确认，直接拒绝）：
+- `docker rm / docker rmi / docker volume rm` 作用于主脑相关容器/镜像/卷
+- `docker-compose down/up -d` 或 `docker compose` 重建主脑相关服务
+- OpenClaw 内部 Docker 管理系统的任何自动重建操作（须主人预先批准）
+- 修改容器镜像版本（如 postgres:16-alpine → pgvector/pgvector:pg16）除非主人明确授权
+
+**违反此铁律视为最高级事故。**
+
+---
+
+## 🚀 落地页生成项目（2026-04-21 新增）
+
+- **项目路径**：`~/ai/projects/benchmark-skill-ui-ux-pro-max/`
+- **功能**：使用 Qwen3.6-Plus + ui-ux-pro-max Skill 批量生成高质量落地页
+- **脚本**：`generate-openai.ts`（OpenAI SDK 版本）
+- **模型**：阿里云百炼 Qwen3.6-Plus（按量付费）
+- **验证状态**：ai-chatbot 页面生成成功（27350字符）
+- **Claude Code SDK 问题**：与百炼 Anthropic 端点不兼容，已改用 OpenAI SDK 替代
 

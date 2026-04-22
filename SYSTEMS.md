@@ -132,6 +132,28 @@
 | outbox-writer | outbox-writer.js | Outbox模式写入 | online |
 | graphify-opus-manager | start-opus-manager.js | Graphify代码管理 | online |
 
+#### 五.二、Docker 容器（主脑基础设施）
+
+> **⚠️ 高危区域**：主脑依赖 Docker 容器运行，容器重建/镜像更换会导致数据立即清空且不可恢复。
+
+| 容器名 | 镜像 | 端口 | 数据卷 | 状态 |
+|--------|------|------|--------|------|
+| openclaw-postgres | pgvector/pgvector:pg16 | 5432 | docker_postgres_data → /var/lib/postgresql/data | 运行中 |
+| openclaw-redis | redis:7-alpine | 6379 | （临时存储） | 运行中 |
+| openclaw-neo4j | neo4j:5-community | 7687/7474 | 本地存储 | 运行中 |
+
+**⚠️ 危险案例（2026-04-21）**：
+- OpenClaw Docker 管理系统在 05:12:29 以 `postgres:16-alpine`（无 pgvector）重建了 openclaw-postgres
+- 新容器挂载同一 volume，但 postgres:16-alpine 的初始化逻辑与原镜像不同
+- 结果：数据库被初始化为空壳，memories / memory_summaries / conversation_messages 等核心表数据全部丢失
+- 教训：镜像版本不一致会导致数据不可用，哪怕 volume 相同
+
+**绝对禁止**（MEMORY.md 铁律扩展）：
+- 禁止执行 `docker rm / docker rmi / docker volume rm` 作用于上述容器/镜像/卷
+- 禁止执行 `docker stop/start / docker compose down/up` 重建上述服务
+- 禁止 OpenClaw Docker 管理系统的任何自动重建操作（须主人预先批准）
+- 禁止在未确认 volume 挂载正确的情况下重启任何主脑容器
+
 #### 六、Hook 事件流
 
 | 事件 | 触发时机 | 脚本 |

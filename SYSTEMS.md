@@ -1265,13 +1265,14 @@ capability-graph/
 - **项目路径**：`/home/ai/projects/tiandao_dongjianyuan/`
 - **Git**：已提交（commit f3963ed / develop 分支）
 
-### 访问地址（HTTPS）
+### 访问地址
 
 | 服务 | 地址 |
 |------|------|
-| **前端界面** | https://100.89.109.20:3012/ |
-| 后端 API | https://100.89.109.20:3014 |
+| **前端界面** | http://100.89.109.20:3012/（HTTP，静态文件服务） |
+| 后端 API | https://100.89.109.20:3014（HTTPS） |
 | 后端健康检查 | https://100.89.109.20:3014/api/health |
+| `/api/auth/me` | ✅ Plan A 新增（token 有效性验证） |
 
 ### 技术栈
 
@@ -1293,7 +1294,8 @@ capability-graph/
 | earthquake_dom | 国内地震（CENC）|
 | news_cache | 新闻缓存（BBC / 新华社）|
 | gold_forecast | 黄金走势分析 |
-| climate_alerts | 极端气候预警 |
+| climate_alerts  | 极端气候预警 |
+| search_history  | 搜索历史归档（2026-04-23 新增）|
 
 ### 7 个子模块（均独立 SSE 刷新，不刷新主页面）
 
@@ -1326,26 +1328,48 @@ capability-graph/
 | GET | /api/news/domestic | 国内新闻 |
 | GET | /api/climate/alerts | 极端气候 |
 | GET | /api/financial/gold-forecast | 黄金走势 |
-| POST | /api/search | Brave 搜索 |
+| POST | /api/search | Brave 搜索（异步写入 `search_history`）|
 | GET | /api/sse/:module | SSE 实时推送 |
+| GET | /api/auth/me | Plan A：token 有效性验证 |
 
-### 启动命令
+### PM2 自启动
 
 ```bash
-# 后端
-cd ~/projects/tiandao_dongjianyuan/backend && node src/index.js
+# 进程列表（已注册开机自启）
+dongjian-backend    # 后端 Express（HTTPS 3014 + HTTP 3015）
+dongjian-frontend  # 前端静态文件服务（HTTP 3012）
 
-# 前端
-cd ~/projects/tiandao_dongjianyuan/frontend && npm run dev
+# 查看状态
+pm2 status | grep dongjian
+
+# 重启
+pm2 restart dongjian-backend dongjian-frontend
+
+# 查看日志
+pm2 logs dongjian-backend --lines 20
+pm2 logs dongjian-frontend --lines 20
+
+# 回滚（Plan A+C 修复前）
+bash /home/ai/.openclaw/workspace/memory-system-rollback/rollback-dongjian.sh
 ```
+
+### 登录安全修复（2026-04-23）
+
+**Plan C**：JWT 过期检查（auth.js 初始化时解析 exp，过期自动清除）
+**Plan A**：token 有效性验证（路由守卫首次加载调 `/auth/me`，无效跳转登录）
+
+### 资料归档（2026-04-23）
+
+7个板块中6个已有定时/实时归档入库。新增 **搜索历史归档**（`search_history` 表，异步写入，不影响搜索响应速度）。
 
 ### 状态
 
-- **后端**：✅ 运行中（3014）
-- **前端**：✅ 运行中（3012）
+- **后端**：✅ PM2 自启动（dongjian-backend）
+- **前端**：✅ PM2 自启动（dongjian-frontend）
 - **数据库**：✅ dongjianyuan_db 已创建
+- **PM2 startup**：✅ systemd pm2-ai 已启用
 - **文档**：`docs/TECHNICAL_PROPOSAL_v1.2.md`
 
 ---
 
-_最后更新：2026-04-22（新增洞鉴院 tiandao_dongjianyuan）_
+_最后更新：2026-04-23（PM2自启动 + Plan A+C登录安全修复）_

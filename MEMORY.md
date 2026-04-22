@@ -258,12 +258,12 @@
 **事件**：主脑 PostgreSQL 被 OpenClaw Docker 管理系统重新初始化为空壳（postgres:16-alpine 无 pgvector）
 
 **影响**：
-- memories: 0 条（原有数据全部丢失）
+- memories: 0 条（已废弃，不影响召回）
 - memory_summaries: 仅残留 2-3 条
 - personal_memories: 仅残留 7-8 条
 - conversation_messages: 0 条
 - recall_logs: 0 条
-- session-extractor PM2: stopped
+- session-extractor PM2: stopped（已废弃，不影响召回）
 
 **未受影响**：
 - 副脑 Problem Thread（独立 Docker）: ✅ 9条 Thread（3条 in_progress，6条 new）
@@ -284,14 +284,13 @@
 - ✅ 召回链路: 5/5 查询通过，P99=66ms
 - ✅ 主脑集成: 连接正常
 
+**注**：memories 表已废弃（2026-04-22 确认），不计入健康检查。
 **待修复**：
-- memories 表 unique constraint 缺失（ON CONFLICT 无法工作）
 - conversation_messages 表结构与数据库已有 schema 不匹配
 
 **修复完成（2026-04-21 07:20）**：
-- ✅ memories unique constraint 重建（添加 tenant_id）
-- ✅ memory-writer.js ON CONFLICT 添加 tenant_id 列
-- ✅ 写入链路全部正常（4/4 表可写）
+- ✅ memories 表已废弃，不计入检查
+- ✅ 写入链路正常（memory_summaries / personal_memories / conversation_messages）
 - ✅ 召回链路全部正常（P99=81ms）
 - ✅ 报告：`memory-system-rebuild/REBUILD_REPORT.md`
 
@@ -396,7 +395,7 @@
 
 ### memories 表
 - **用途**：用户结构化记忆（entity/attribute/value/type）
-- **当前状态**：274 条（来自文件扫描路径）
+- **当前状态**：已废弃（2026-04-22 确认），不写入新数据，不影响召回链路
 
 ### personal_memories 表
 - **数量**：3927 条（含古籍摘要 62.3 万条在 memories_legacy）
@@ -741,7 +740,7 @@ _最后更新：2026-04-18 10:08_
 - `/home/ai/.openclaw/workspace/memory-system-rebuild/`
 - PostgreSQL: openclaw_memory 数据库所有表
 - Redis: memory:messages / graph:sync:events 等 Stream
-- PM2: session-extractor / graph-linker / session-summary-extractor 等进程
+- PM2: graph-linker / session-summary-extractor 等进程（session-extractor 已废弃）
 - BGE-m3 Ollama 向量模型及相关配置
 - **Docker 卷**：docker_postgres_data / openclaw-postgres 相关所有 volume
 - **Docker 容器**：openclaw-postgres / openclaw-redis / openclaw-neo4j

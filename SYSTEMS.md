@@ -92,7 +92,6 @@
 
 | 表名 | 存储内容 | 关键字段 | 索引 |
 |------|---------|---------|------|
-| **memories** | 结构化记忆 | id/tenant_id/user_id/entity/attribute/value/embedding/memory_type/confidence/is_active | HNSW(embedding) / (tenant_id,session_id,message_index,entity,attribute) UNIQUE |
 | **memory_summaries** | LLM摘要 | id/summary/summary_type/embedding/source_session_id/confidence/content_hash | HNSW(embedding) / created_at DESC |
 | **personal_memories** | 原始内容 | id/content/category/embedding/origin_session_id/confidence | HNSW(embedding) / category / created_at DESC |
 | **conversation_messages** | 会话消息 | id/session_id/turn_index/role/content/channel/metadata | (session_id,turn_index,role) UNIQUE |
@@ -108,7 +107,7 @@
 |  | 捕获消息写入 conversation_messages | 链路A |
 |  | before_prompt_build 召回入口 | 链路D |
 |  | 召回服务：三表HNSW + 意图分类 + 排序 | 链路D |
-|  | 记忆写入：memories/memory_summaries/personal_memories | 链路B |
+|  | 记忆写入：memory_summaries/personal_memories | 链路B |
 |  | Session级摘要Daemon | 链路C |
 |  | 会话文件轮询提取 | 链路B |
 |  | Redis Stream → Neo4j 图谱同步 | 链路E |
@@ -191,14 +190,14 @@
 
 | 意图 | 触发关键词示例 | 召回表优先级 | 半衰期 |
 |------|-------------|------------|--------|
-| TECHNICAL | 代码、bug、api、docker、pm2、hook | memories > summaries > personal | 4h |
-| PROJECT | 项目、进度、milestone、计划 | summaries > memories > personal | 4h |
-| REASONING | 为什么、分析、推理、原因 | summaries > memories > personal | 2h |
-| FACTUAL | 是什么、定义、解释 | summaries > memories > personal | 2h |
-| PREFERENCE | 喜欢、偏好、习惯 | personal > summaries > memories | 8h |
-| EVENT | 昨天、上次、会议、发生 | personal > summaries > memories | 0.5h |
-| PERSON | 谁、联系人、团队 | personal > summaries > memories | 4h |
-| DEFAULT | 其他 | summaries > memories > personal | 2h |
+| TECHNICAL | 代码、bug、api、docker、pm2、hook | summaries > personal | 4h |
+| PROJECT | 项目、进度、milestone、计划 | summaries > personal | 4h |
+| REASONING | 为什么、分析、推理、原因 | summaries > personal | 2h |
+| FACTUAL | 是什么、定义、解释 | summaries > personal | 2h |
+| PREFERENCE | 喜欢、偏好、习惯 | personal > summaries | 8h |
+| EVENT | 昨天、上次、会议、发生 | personal > summaries | 0.5h |
+| PERSON | 谁、联系人、团队 | personal > summaries | 4h |
+| DEFAULT | 其他 | summaries > personal | 2h |
 
 #### 十、关键配置
 
@@ -212,8 +211,6 @@
 ════════════════════════════════════════════════════════════════
 
 【PM2 进程】
-  ✅ session-extractor: online | 运行 35min
-     脚本: session-file-extractor-loop.js
   ✅ session-summary-extractor: online | 重启 4 次 | 运行 51min
      脚本: session-summary-extractor.js
   ✅ outbox-writer: online | 重启 1 次 | 运行 63min
@@ -240,10 +237,6 @@
   ✅ hermes-server (31235): ok | sessions: 0 | 延迟: 3ms
   ✅ hermes-web (31236): ok | 延迟: 2ms
 
-【session-extractor】(文件扫描 → 对话存档+记忆提取)
-  ⚠️ conversation_messages: 近1h +80 条 | 总 80 条 (+80条)
-  ⚠️ memories: 近1h +3 条 | 总 3 条 (+3条)
-     ⚠️ memories 表总量过少 (<100)，请检查 LLM 提取是否正常
 
 【graph-linker】(PersonalMemory → Neo4j 图关联)
   ✅ PersonalMemory 节点: 2506 (+0节点)
@@ -277,9 +270,9 @@
 
 ────────────────────────────────────────────────────────────────
 【总结】
-  ⚠️ memories 表总量过少 (<100)，请检查 LLM 提取是否正常
+  ✅ 运行中: 6/6 个进程（session-extractor 已废弃，不计入）
 
-  运行中: 7/7 个进程
+  ⚠️ memories 表已废弃，不计入检查
 
 ════════════════════════════════════════════════════════════════
 
@@ -292,7 +285,7 @@
 
 PostgreSQL ... ✅ OK (12ms)
 pgvector   ... ✅ OK (v0.8.2)
-Tables     ... ✅ OK — {"memories":3,"memory_summaries":3,"personal_memories":48,"conversation_messages":80,"recall_logs":22}
+Tables     ... ✅ OK — {"memory_summaries":3,"personal_memories":48,"conversation_messages":80,"recall_logs":22}
 HNSW Index ... ✅ OK (3 indexes)
 Redis      ... ✅ OK
 BGE-m3     ... ✅ OK (dim=1024, 70ms)

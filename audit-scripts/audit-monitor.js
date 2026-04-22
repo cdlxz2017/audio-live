@@ -110,12 +110,18 @@ function checkTodayFile() {
     failed: 0,
   };
   
-  if (!fs.existsSync(filePath)) {
-    issues.push('TODAY_FILE_NOT_EXISTS');
-    return { ok: false, issues, stats };
+  // 今日文件不存在 = 今日尚未有任何审计写入，这是正常状态（append-audit会在首次写入时自动创建文件）
+  // 不算作 issue，只在 stats 中标记
+  stats.exists = fs.existsSync(filePath);
+  if (!stats.exists) {
+    // 非今日文件不存在才报错；今日文件缺失属于正常（允许首次写入前不存在）
+    if (today !== getDateStr()) {
+      issues.push('TODAY_FILE_NOT_EXISTS');
+      return { ok: false, issues, stats };
+    }
+    // 今日文件不存在：正常，直接返回
+    return { ok: true, issues, stats };
   }
-  
-  stats.exists = true;
   
   try {
     const stat = fs.statSync(filePath);

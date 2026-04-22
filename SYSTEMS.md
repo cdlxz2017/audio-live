@@ -155,11 +155,13 @@
 
 #### 六、Hook 事件流
 
-| 事件 | 触发时机 | 脚本 |
-|------|---------|------|
-| before_message_write | 消息写盘前 | session-capture-hook → conversation_messages |
-| before_prompt_build | LLM调用前 | recall-hook → RecallService → 注入记忆 |
-| after_response | LLM响应后 | recall-hook后处理：评分更新/置信度检测 |
+| 事件 | 触发时机 | 脚本 | 状态 |
+|------|---------|------|------|
+| before_message_write | 消息写盘前 | session-capture-hook → conversation_messages | ✅ |
+| before_prompt_build | LLM调用前 | recall-hook → RecallService → 注入记忆 | ✅ 已修复(04-23) |
+| after_response | LLM响应后 | recall-hook后处理：评分更新/置信度检测 | ✅ |
+
+> **2026-04-23 recall-hook 修复**：session-context-loader 的 conversation-archiver 依赖内联，memory-garbage-collector 和 reasoning-pattern-manager 以 stub 替代（核心 recall 功能不受影响）。
 
 #### 七、副脑 Problem Thread
 

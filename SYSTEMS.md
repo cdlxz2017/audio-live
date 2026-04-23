@@ -171,12 +171,13 @@
 | pt-postgres | 54320 | 独立数据库，problem_threads 表 |
 | pt-neo4j | 7688 | 关系图谱 |
 
-**API端点**：
--  — 列出 threads
--  — 新建 thread
--  — 追加 Stage
--  — 更新状态
--  — 推送 session 摘要
+**API端点**（Base URL: `http://localhost:54321`）：
+- `GET /threads` — 列出所有 threads
+- `GET /threads/:id` — 获取单个 thread
+- `POST /threads` — 新建 thread
+- `POST /threads/:id/stages` — 追加 Stage
+- `PATCH /threads/:id/status` — 更新状态（body: `{"status":"completed"}`）
+- `POST /sessions/:id/summary` — 推送 session 摘要
 
 #### 八、Redis 数据结构
 
@@ -899,8 +900,8 @@ sudo ./install-run.sh
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| **Hermes Web UI** | http://192.168.0.100:31236 | 玄一网页控制台（推荐）|
-| **Hermes API Server** | http://192.168.0.100:31235 | API接口（/health、/chat、/sessions）|
+| **Hermes Web UI** | http://100.89.109.20:31236 | 玄一网页控制台（推荐）|
+| **Hermes API Server** | http://100.89.109.20:31235 | API接口（/health、/chat、/sessions）|
 
 - **PM2进程**：hermes-server（31235）、hermes-web（31236）均 ✅ online
 - **状态**：✅ Phase 1-3已完成
@@ -1002,6 +1003,44 @@ sudo ./install-run.sh
   - 自动HTML报告（含CVSS评分、修复建议、统计图表）
   - 痕迹清理（远程主机+本地）
 - **脚本数**：23个完整可执行脚本，约5,800行代码
+- **状态**：✅ 已部署
+
+### 天诛系统（TianZhu Automated Defense）
+- **法律授权**：主席绝密令（内部绝密编号001）| 国安（内部绝密编号001）
+- **路径**：`/home/ai/projects/tianxing-defense/`
+- **触发模式**：fail2ban 任意 jail 封禁 → 天刑扫描 + 天雷渗透同步触发（C模式）
+- **架构**：
+  ```
+  fail2ban 封禁 / Cowrie 蜜罐连接
+         ↓
+  trigger-daemon（白名单三重校验 + 频率限制）
+         ↓
+  天刑扫描（情报收集）+ 天雷渗透（同步反击）
+         ↓
+  审计日志 + 主人通知
+  ```
+- **组件**：`trigger-daemon.js`（PM2 ID 24）| `tianlei-auto.sh` | `sync-whitelist.sh` | `authorized-scopes.json`
+- **fail2ban 集成**：
+  - jail：sshd / tiandao-auth / openclaw-gateway / cowrie / beelzebub
+  - action：`tianxing-scan`（天刑）+ `tianlei-action`（天雷）
+- **Cowrie 蜜罐直连**：`cowrie.session.connect` → 天刑 + 天雷同步触发
+- **白名单同步**：cron 每5分钟从 UFW 动态同步至 fail2ban ignoreip
+- **天雷非交互模式**：`TIANLEI_NONINTERACTIVE=1` 环境变量支持静默自动执行
+- **资源控制**：nice -n 19 / timeout 3600 / ulimit 2G
+- **关键文件**：
+  - `/home/ai/projects/tianxing-defense/scripts/trigger-daemon.js`
+  - `/home/ai/projects/tianxing-defense/scripts/tianlei-auto.sh`
+  - `/home/ai/projects/tianxing-defense/config/authorized-scopes.json`
+  - `/home/ai/.openclaw/workspace/deliverables/tianlei/run-all.sh`
+- **PM2 进程**：`trigger-daemon`（PM2 ID 24）
+- **状态**：✅ Phase 1+2+3 全部部署完成
+
+### 天诛系统自检机制
+- **健康检查脚本**：`/home/ai/projects/tianxing-defense/scripts/tianzhu-health-check.sh`
+- **检查频率**：每2小时（cron）
+- **检查项**：tianzhu-daemon进程 / fail2ban / Cowrie / Beelzebub / 日志可写性 / 白名单同步脚本 / JS语法 / 授权配置文件
+- **自动修复**：进程掉线自动重启，日志错误过多时告警
+- **故障通知**：通过 OpenClaw 消息系统推送主人
 - **状态**：✅ 已部署
 
 ### ClamAV（恶意文件扫描引擎）

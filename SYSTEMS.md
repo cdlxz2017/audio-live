@@ -865,6 +865,96 @@ node audit-scripts/audit-monitor.js                         # 监控检查
 
 ---
 
+## 灵枢院（tiandao_lingshuyuan）
+
+- **触发词**：灵枢院、lingshuyuan、成员管理、数据查询、状态监测
+- **项目路径**：`/home/ai/projects/tiandao_lingshuyuan/`
+- **Git 仓库**：`/home/ai/backups/lingshuyuan-git-bare.git`（已推送）
+
+### 访问地址（HTTPS）
+
+| 服务 | 地址 |
+|------|------|
+| **前端界面（唯一入口）** | https://100.89.109.20:3021/ |
+| 后端 API | https://100.89.109.20:3021/api |
+
+### PM2 进程（开机自启）
+
+| 进程 | 端口 | 说明 |
+|------|------|------|
+| lingshuyuan-backend | 3600 | Express API（仅本地 127.0.0.1）|
+| lingshuyuan-frontend | 3020 | 静态文件服务（仅本地）|
+| lingshuyuan-https | 3021 | HTTPS 代理（外部入口）|
+
+### PM2 配置
+
+```bash
+pm2 start /home/ai/projects/tiandao_lingshuyuan/ecosystem.lingshuyuan.config.js
+pm2 save
+```
+
+### 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 前端 | Vue 3 + Vite（HTTPS）+ Hash 路由 |
+| 后端 | Express.js（端口 3600）|
+| 数据库 | PostgreSQL 独立 schema（lingshuyuan，dongjianyuan_db 内）|
+| 认证 | JWT + bcrypt |
+| HTTPS | Node.js HTTPS 代理（自签证书）|
+| LLM | DashScope qwen-plus（智能搜索）|
+| OCR | DashScope qwen-vl-plus（身份证扫描）|
+
+### 数据库（灵枢院 schema）
+
+| 表名 | 说明 |
+|------|------|
+| members | 成员信息（id/name/gender/birthdate/ethnicity/id_number/address/status）|
+| operation_logs | 操作日志 |
+| schemas | 预留 |
+
+### 核心 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /api/auth/login | 登录 |
+| GET | /api/members | 成员列表（分页+搜索）|
+| POST | /api/members | 新建成员（支持 gender/birthdate/id_number 等）|
+| PUT | /api/members/:id | 更新成员 |
+| DELETE | /api/members/:id | 删除成员（硬删除）|
+| POST | /api/db/search | 智能搜索（自然语言→全库查询）|
+| GET | /api/db/databases | 7个数据库统计（表数量/行数）|
+| GET | /api/monitor/status | 状态监测（主脑/副脑/各数据库）|
+
+### 数据库概览
+
+| 数据库 | 表数 | 数据行数 |
+|--------|------|----------|
+| 主脑数据库 | 22 | 50,063 |
+| 副脑数据库 | 1 | 490 |
+| 洞鉴院 | 11 | 7,028 |
+| 天道成员管理系统 | 7 | 289 |
+| 雷殛院 | 2 | 298 |
+| 因果院 | 3 | 373 |
+| 灵枢院 | 4 | 11 |
+
+### 登录凭证
+
+| 字段 | 值 |
+|------|------|
+| 用户名 | 水神 |
+| 密码 | Admin@123456 |
+
+### 状态
+
+- **后端**：✅ PM2 自启动（lingshuyuan-backend）
+- **前端**：✅ PM2 自启动（lingshuyuan-frontend）
+- **HTTPS 代理**：✅ PM2 自启动（lingshuyuan-https）
+- **Git 推送**：✅ 已推送至 /home/ai/backups/lingshuyuan-git-bare.git
+- **最后提交**：d06e2c2（PM2 ecosystem + HTTPS 自启动）
+
+---
+
 ## 天道成员管理平台·跨平台安装包（tiandao_members_package）
 
 - **触发词**：打包、跨平台安装、mac安装包、ubuntu安装包、成员平台打包
@@ -1320,6 +1410,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 邮件系统 | ✅ 正常 |
 | 天道成员管理平台 | ✅ 运行中（HTTPS 前后端）|
 | 天道成员管理平台·跨平台安装包 | ✅ 构建完成 |
+| 灵枢院（tiandao_lingshuyuan）| ✅ 运行中（HTTPS PM2自启）|
 | 洞鉴院（tiandao_dongjianyuan）| ✅ 运行中（前端3012 / 后端3014）|
 | 天道·系统 | ✅ 运行中（5服务）|
 | Hermes Agent | ✅ 可用 |
@@ -1519,4 +1610,4 @@ bash /home/ai/.openclaw/workspace/memory-system-rollback/rollback-dongjian.sh
 
 ---
 
-_最后更新：2026-04-23（PM2自启动 + Plan A+C登录安全修复）_
+_最后更新：2026-04-24（灵枢院上线 + PM2自启 + HTTPS唯一入口）_

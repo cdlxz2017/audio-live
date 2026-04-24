@@ -1,0 +1,20 @@
+{
+  "name": "memory-system-rebuild",
+  "version": "1.0.0",
+  "description": "记忆链路系统重建 — 独立版",
+  "main": "src/db.js",
+  "scripts": {
+    "health": "node scripts/health-check.js",
+    "test:write": "node scripts/test-write.js",
+    "test:recall": "node scripts/test-recall.js",
+    "migrate": "PGPASSWORD=zyxrcy910128 psql -h localhost -p 5432 -U openclaw_ai -d openclaw_memory -f migrations/001_init.sql"
+  },
+  "dependencies": {
+    "ioredis": "^5.4.1",
+    "js-yaml": "^4.1.0",
+    "pg": "^8.20.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

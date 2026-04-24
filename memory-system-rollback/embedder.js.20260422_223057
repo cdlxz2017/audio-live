@@ -1,0 +1,83 @@
+/**
+ * Embedding Service (Ollama BGE-m3)
+ * 生成 1024 维向量
+ */
+
+const config = require('./config');
+
+class Embedder {
+  constructor() {
+    this.model = config.embedding.model;
+    this.url = config.embedding.url;
+    this.dimensions = config.embedding.dimensions;
+  }
+
+  async embed(text) {
+    const url = `${this.url}/api/embeddings`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: text,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Embedding failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.embedding; // 1024d array
+  }
+
+  async embedBatch(texts) {
+    // Ollama 批量 embedding（如果 API 支持）
+    const url = `${this.url}/api/embeddings`;
+    const results = [];
+
+    for (const text of texts) {
+      try {
+        const embedding = await this.embed(text);
+        results.push(embedding);
+      } catch (err) {
+        console.error(`[Embedder] Failed to embed text: ${text.substring(0, 50)}...`, err.message);
+        results.push(null); // 占位，保持索引对应
+      }
+    }
+
+    return results;
+  }
+}
+
+// 单例
+const embedder = new Embedder();
+
+/**
+ * 计算余弦相似度
+ */
+function cosineSimilarity(a, b) {
+  if (!a || !b || a.length !== b.length) return 0;
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * 计算向量距离（用于 pgvector <=> 操作符）
+ * pgvector 的 <=> 是余弦距离 = 1 - cosine_similarity
+ */
+function cosineDistance(a, b) {
+  return 1 - cosineSimilarity(a, b);
+}
+
+module.exports = {
+  embedder,
+  cosineSimilarity,
+  cosineDistance,
+};

@@ -1,10 +1,10 @@
 # SOP-EXCELLENCE-FRAMEWORK — 卓越执行框架标准操作流程
 
-> 版本：v2.3  
-> 日期：2026-04-24  
+> 版本：v2.2  
+> 日期：2026-04-20  
 > 来源：主人姚旭（灵须子）提出的「已知/未知分流 + 危险点前置 + 文档闭环」框架  
 > 评审：Claude Opus + DeepSeek Reasoner 交叉评审  
-> 更新（v2.3）：严格使用 ClawTeam CLI 编排团队，sessions_spawn 不得替代编排层。ClawTeam spawn → sessions_spawn 为底层机制。 + 模型可用性保障（实时探测+动态组队）  
+> 更新：融入 ClawTeam 团队协作 + 模型可用性保障（实时探测+动态组队）  
 > 状态：✅ 已生效
 
 ---
@@ -312,132 +312,98 @@
 
 ## 四、团队模式（ClawTeam 协同）
 
-> **生效日期**：2026-04-24
-> **核心约束**：启用团队模式时，**必须使用 ClawTeam CLI**。sessions_spawn 是 ClawTeam 的底层执行机制，不得用 sessions_spawn 替代 ClawTeam 的编排层。
-
 ### 4.1 角色定义
 
 | 角色 | 职责 | 首选模型 | 替补 1 | 替补 2 |
 |------|------|---------|--------|--------|
-| 🏗️ Architect | 方案设计、架构设计 | 4sapi/claude-opus-4-6 | deepseek/deepseek-reasoner | ollama/qwen3:30b-a3b |
-| 🔨 Builder | 编码执行、方案实施 | 4sapi/claude-sonnet-4-6 | deepseek/deepseek-chat | - |
-| 🔍 Reviewer | 审查找茬、风险评估 | 4sapi/claude-opus-4-6 | deepseek/deepseek-reasoner | - |
-| 🧪 Tester | 测试验证、质量检查 | 4sapi/claude-sonnet-4-6 | - | - |
-| 📝 Writer | 文档沉淀、知识记录 | 4sapi/claude-sonnet-4-6 | deepseek/deepseek-chat | - |
+| 🏗️ Architect | 方案设计、架构设计 | opus-4-6 | deepseek-reasoner | kimi-k2 |
+| 🔨 Builder | 编码执行、方案实施 | sonnet-4-6 | deepseek-chat | gpt-4.1-mini |
+| 🔍 Reviewer | 审查找茬、风险评估 | opus-4-6 | deepseek-reasoner | kimi-k2 |
+| 🧪 Tester | 测试验证、质量检查 | sonnet-4-6 | deepseek-chat | gpt-4.1-mini |
+| 📝 Writer | 文档沉淀、知识记录 | sonnet-4-6 | deepseek-chat | kimi-k2 |
 
-### 4.2 动态组队流程（ClawTeam CLI）
+### 4.2 动态组队流程
 
-**核心原则：必须使用 ClawTeam CLI 进行团队编排，不得绕过。**
+**核心原则：需要时才测，测完就组队，不预先探测。**
 
 ```
 需要团队模式
   │
-  ▼ Step 1：向主人确认
-  确认团队目标 + 角色组合
+  ▼
+Step A1：实时探测可用模型
+  按优先级逐一探测（发轻量请求，30秒超时）：
+    opus-4-6 → sonnet-4-6 → deepseek-reasoner → deepseek-chat → kimi-k2 → gpt-4.1-mini
   │
-  ▼ Step 2：创建团队
-  clawteam team spawn-team <team-name> -d "<任务描述>" -n leader
+  ├─ 记录哪些模型可用、响应速度
+  └─ 标记不可用的模型
   │
-  ▼ Step 3：创建任务链
-  每个角色一个任务，用 --blocked-by 建立依赖：
-    ARCH_ID=$(clawteam --json task create <team> "<任务>" -o architect | jq -r '.id')
-    clawteam task create <team> "<任务>" -o builder --blocked-by $ARCH_ID
+  ▼
+Step A2：从可用模型中组建团队
+  按角色需求，从可用模型池中分配：
+
+  角色分配优先级：
+    Architect  → opus-4-6（可用？）→ deepseek-reasoner（可用？）→ kimi-k2（可用？）
+    Builder    → sonnet-4-6（可用？）→ deepseek-chat（可用？）→ gpt-4.1-mini（可用？）
+    Reviewer   → opus-4-6（可用？）→ deepseek-reasoner（可用？）→ kimi-k2（可用？）
+    Tester     → sonnet-4-6（可用？）→ deepseek-chat（可用？）→ gpt-4.1-mini（可用？）
+    Writer     → sonnet-4-6（可用？）→ deepseek-chat（可用？）→ kimi-k2（可用？）
   │
-  ▼ Step 4：拉起 Agent
-  clawteam spawn -t <team> -n architect --task "<任务描述>"
-  clawteam spawn -t <team> -n builder --task "<任务描述>"
-  （每个 Agent 在独立 tmux 窗口运行）
+  ├─ 如果某角色的所有候选模型都不可用
+  │   → 该角色由主人（玄枢）兼任
   │
-  ▼ Step 5：后台监控（立即开始）
-  clawteam --json task list <team>   # 每30秒轮询
-  clawteam board show <team>           # 看板视图
-  ~50% 完成时向主人发送进度更新
+  └─ 向主人汇报组队结果："本次团队使用 XX 模型，其中 YY 角色由玄枢兼任"
   │
-  ▼ Step 6：Agent 间通信
-  clawteam inbox send <team> <to-agent> --from <from-agent> "<消息内容>"
+  ▼
+Step A3：创建团队
+  clawteam team spawn-team <name> -d "<描述>" -n leader
   │
-  ▼ Step 7：合并 + 交付
-  clawteam workspace merge <team> --agent <name>  # 合并各 Agent 分支
-  clawteam task stats <team>                    # 统计耗时
+  ▼
+Step A4：创建任务与依赖
+  按角色拆分任务，设置 --blocked-by 依赖链
+  示例：
+    Architect 设计方案 → Builder 才能开工
+    Builder 完成代码 → Tester 才能验证
+    Tester 通过 → Writer 才能写文档
   │
-  ▼ Step 8：清理
-  clawteam team cleanup <team> --force
+  ▼
+Step A5：拉起 Agent
+  每个 Agent 用分配好的模型拉起
+  各自运行在独立 tmux 窗口 + git 分支
+  │
+  ▼
+Step A6：监控 + 中途汇报
+  每 30-60 秒轮询进度
+  约 50% 完成时向主人发送进度更新
+  │
+  ▼
+Step A7：互查机制
+  Architect 出方案 → Reviewer 审查 → 通过后 Builder 才动工
+  Builder 写代码 → Tester 测试 → 通过后 Writer 写文档
+  │
+  ▼
+Step A8：合并与交付
+  所有任务完成后：
+    合并各 Agent 的 git 分支
+    输出最终成果
+    向主人汇报
+  │
+  ▼
+Step A9：清理
+  clawteam team cleanup <name> --force
 ```
 
-### 4.3 完整命令模板
-
-```bash
-# ========== Step 2：创建团队 ==========
-clawteam team spawn-team tianzhu-team -d "天诛系统Phase1+2+3部署" -n leader
-
-# ========== Step 3：创建任务链 ==========
-ARCH_ID=$(clawteam --json task create tianzhu-team "设计天诛系统架构方案" -o architect | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-BUILDER_ID=$(clawteam --json task create tianzhu-team "执行Phase1部署" -o builder --blocked-by $ARCH_ID | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-clawteam task create tianzhu-team "执行Phase2部署" -o builder --blocked-by $BUILDER_ID
-clawteam task create tianzhu-team "审查部署结果" -o reviewer --blocked-by $BUILDER_ID
-
-# ========== Step 4：拉起 Agent ==========
-clawteam spawn -t tianzhu-team -n architect \
-  --task "分析天诛系统Phase1+2+3的完整架构方案，包括fail2ban联动、trigger-daemon、天雷反击链路。输出架构设计文档。"
-
-clawteam spawn -t tianzhu-team -n builder \
-  --task "基于Architect的方案，执行Phase1+2+3的具体部署。执行完成后输出部署报告。"
-
-clawteam spawn -t tianzhu-team -n reviewer \
-  --task "审查Builder的部署结果，验证所有组件正常运行，输出审查意见。"
-
-# ========== Step 5：后台监控（立即在后台运行）==========
-# 启动后台监控（不等完成，立即告知主人已开始监控）
-while sleep 30; do
-  RESULT=$(clawteam --json task list tianzhu-team 2>/dev/null)
-  DONE=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(1 for t in d if t['status']=='completed'))")
-  TOTAL=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))")
-  echo "[$(date)] $DONE/$TOTAL 完成"
-  if [ "$DONE" = "$TOTAL" ]; then break; fi
-done &
-
-# ========== Step 7：合并 + 交付 ==========
-clawteam workspace merge tianzhu-team --agent architect
-clawteam workspace merge tianzhu-team --agent builder
-clawteam workspace merge tianzhu-team --agent reviewer
-clawteam task stats tianzhu-team
-
-# ========== Step 8：清理 ==========
-clawteam team cleanup tianzhu-team --force
-```
-
-### 4.4 监控汇报规则
-
-| 时机 | 必须汇报 |
-|------|---------|
-| 团队创建后 | 向主人报告：团队名、角色、Agent 数量 |
-| ~50% 任务完成 | 向主人发送中段进度更新 |
-| 所有任务完成 | 向主人交付最终成果（合并后） |
-| 出现阻塞/失败 | 立即向主人汇报，不等待 |
-
-### 4.5 适用场景
+### 4.3 适用场景
 
 | 场景 | 角色组合 | 说明 |
 |------|---------|------|
 | 新功能开发 | Architect + Builder + Reviewer | 设计-执行-审查三阶段 |
 | 数据库变更 | Architect + Builder + Reviewer + Tester | 增加测试验证 |
-| 系统重构 | 全部5角色 | 完整团队 |
+| 系统重构 | 全部角色 | 完整团队 |
 | 调研分析 | Architect + Reviewer | 方案-评审即可 |
 | Bug 修复 | 不启用 | 单 AI 足够（除非主人要求） |
 | 常规操作 | 不启用 | 单 AI 即可 |
 
-### 4.6 违规处理
-
-| 违规行为 | 处理方式 |
-|---------|---------|
-| 用 sessions_spawn 代替 ClawTeam | 立即停止，重走正确流程 |
-| 未创建团队就拉起 Agent | 立即停止，先创建团队 |
-| 未设置 --blocked-by 依赖链 | 立即停止，重新设置 |
-| 未监控就结束 | 补监控，向主人发送完整状态 |
-| 未清理团队就结束 | 补清理（clawteam cleanup） |
-
 ---
-
 
 ## 五、模型可用性保障
 
@@ -479,32 +445,15 @@ sessions_spawn(task="回答'OK'", model=<目标模型>, mode="run")
 
 探测完成后，从可用模型池中动态分配角色（见 4.2 Step A2）。
 
-### 5.4 超时处理机制（团队模式）
+### 5.4 超时处理机制
 
-> **铁律（2026-04-24 新增）**：所有超时处理必须遵守以下三级递进规则，不得跳过中间步骤。
-
-| 阶段 | 触发条件 | 处理动作 | 负责人 |
-|------|---------|---------|--------|
-| **第一级：重试** | API 超时 | 立即重试，**最多重试 5 次** | 玄枢自动执行 |
-| **第二级：切换模型** | 5 次重试后仍超时 | 切换到下一梯队模型，重试 **最多 5 次** | 玄枢自动执行 |
-| **第三级：上报主人** | 第二级 5 次重试后仍超时 | 停止一切操作，向主人汇报：哪个模型/哪个角色/超时次数/已尝试的模型列表，等待主人指示 | 玄枢 |
-
-**超时计时标准**：
-- clawteam spawn Agent 响应超时：30 秒/次
-- clawteam inbox 消息传递超时：60 秒/次
-- 整体任务超时（如 15 分钟无进展）：触发第一级重试
-
-**上报主人时必须包含的信息**：
-```
-[团队模式超时报告]
-- 任务：<任务名称>
-- 角色：<Architect/Builder/...>
-- 当前模型：<模型名>
-- 超时次数：<N> 次（已重试 5 次）
-- 已尝试的模型：<列表>
-- 当前梯队：<T1/T2/T3>
-- 建议：由主人决定是否继续、换模型、或终止团队模式
-```
+| 场景 | 超时阈值 | 处理动作 |
+|------|---------|---------|
+| Agent 无响应 | 5 分钟 | 发送提醒消息 |
+| Agent 仍无响应 | 10 分钟 | 杀掉进程，换替补模型重新拉起 |
+| API 返回 429（限流） | 立即 | 切换到同梯队其他模型 |
+| API 返回 5xx（服务错误） | 立即 | 降级到下一梯队 |
+| 连续失败 2 次 | — | 上报主人，附失败日志 |
 
 ### 5.5 降级链路（动态选择）
 

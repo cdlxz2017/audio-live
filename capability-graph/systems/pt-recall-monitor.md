@@ -1,4 +1,4 @@
-# 副脑召回监控系统（pt-recall-monitor）
+# 主脑召回监控系统（pt-recall-monitor）
 
 ## 基本信息
 
@@ -13,7 +13,7 @@
 ## 架构
 
 ```
-副脑 API (54321)
+主脑 API (54321)
     │
     ├─ 中间件（src/api/index.js 插入）
     │   ├─ 拦截 GET  /threads?status=active  → source: plugin

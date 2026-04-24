@@ -1,0 +1,237 @@
+/**
+ * Circuit Breaker Implementation
+ * 熔断器：防止级联失败，保证系统稳定性
+ */
+
+const { setTimeout: sleep } = require('timers/promises');
+
+const STATE = {
+  CLOSED: 'CLOSED',   // 正常：所有请求通过
+  OPEN: 'OPEN',       // 熔断：拒绝所有请求
+  HALF_OPEN: 'HALF_OPEN', // 半开：允许探测请求
+};
+
+class CircuitBreaker {
+  /**
+   * @param {Object} options
+   * @param {number} options.failureThreshold 连续失败次数阈值
+   * @param {number} options.successThreshold 半开状态下连续成功次数
+   * @param {number} options.timeoutMs 熔断持续时间
+   * @param {number} options.halfOpenMaxCalls 半开状态最大探测次数
+   */
+  constructor(options = {}) {
+    this.failureThreshold = options.failureThreshold ?? 5;
+    this.successThreshold = options.successThreshold ?? 2;
+    this.timeoutMs = options.timeoutMs ?? 60000;
+    this.halfOpenMaxCalls = options.halfOpenMaxCalls ?? 3;
+
+    this._state = STATE.CLOSED;
+    this._failureCount = 0;
+    this._successCount = 0;
+    this._lastFailureTime = null;
+    this._halfOpenCalls = 0;
+  }
+
+  get state() {
+    return this._state;
+  }
+
+  isCallAllowed() {
+    switch (this._state) {
+      case STATE.CLOSED:
+        return true;
+      case STATE.OPEN:
+        // 检查超时是否到期
+        if (Date.now() - this._lastFailureTime >= this.timeoutMs) {
+          this._transitionTo(STATE.HALF_OPEN);
+          return true;
+        }
+        return false;
+      case STATE.HALF_OPEN:
+        return this._halfOpenCalls < this.halfOpenMaxCalls;
+      default:
+        return false;
+    }
+  }
+
+  recordSuccess() {
+    switch (this._state) {
+      case STATE.CLOSED:
+        this._failureCount = 0;
+        break;
+      case STATE.HALF_OPEN:
+        this._successCount++;
+        this._halfOpenCalls++;
+        if (this._successCount >= this.successThreshold) {
+          this._transitionTo(STATE.CLOSED);
+        }
+        break;
+    }
+  }
+
+  recordFailure() {
+    this._failureCount++;
+    this._lastFailureTime = Date.now();
+
+    switch (this._state) {
+      case STATE.CLOSED:
+        if (this._failureCount >= this.failureThreshold) {
+          this._transitionTo(STATE.OPEN);
+        }
+        break;
+      case STATE.HALF_OPEN:
+        // 半开状态失败 → 立即重新进入 OPEN
+        this._transitionTo(STATE.OPEN);
+        break;
+    }
+  }
+
+  _transitionTo(newState) {
+    const prev = this._state;
+    this._state = newState;
+
+    switch (newState) {
+      case STATE.CLOSED:
+        this._failureCount = 0;
+        this._successCount = 0;
+        this._halfOpenCalls = 0;
+        break;
+      case STATE.OPEN:
+        this._successCount = 0;
+        this._halfOpenCalls = 0;
+        break;
+      case STATE.HALF_OPEN:
+        this._halfOpenCalls = 0;
+        this._successCount = 0;
+        break;
+    }
+
+    console.log(`[CircuitBreaker] ${prev} → ${newState}`);
+  }
+
+  /**
+   * 带熔断保护的调用
+   * @param {Function} fn 异步函数
+   * @param {Function|null} fallback 降级函数
+   * @returns {Promise<any>}
+   */
+  async call(fn, fallback = null) {
+    if (!this.isCallAllowed()) {
+      if (fallback) {
+        return await fallback();
+      }
+      throw new CircuitOpenError(`Circuit is ${this._state}`);
+    }
+
+    try {
+      const result = await fn();
+      this.recordSuccess();
+      return result;
+    } catch (err) {
+      this.recordFailure();
+      if (fallback) {
+        return await fallback();
+      }
+      throw err;
+    }
+  }
+}
+
+class CircuitOpenError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'CircuitOpenError';
+  }
+}
+
+/**
+ * 多熔断器管理（按服务名隔离）
+ */
+class CircuitBreakerManager {
+  constructor() {
+    this._breakers = new Map();
+    this._configs = new Map();
+  }
+
+  register(name, options) {
+    this._configs.set(name, options);
+    this._breakers.set(name, new CircuitBreaker(options));
+  }
+
+  get(name) {
+    if (!this._breakers.has(name)) {
+      const config = this._configs.get(name) || {};
+      this._breakers.set(name, new CircuitBreaker(config));
+    }
+    return this._breakers.get(name);
+  }
+
+  getState(name) {
+    const cb = this.get(name);
+    return {
+      name,
+      state: cb.state,
+      failureCount: cb._failureCount,
+      lastFailureTime: cb._lastFailureTime,
+    };
+  }
+
+  listStates() {
+    return Array.from(this._breakers.keys()).map(name => this.getState(name));
+  }
+}
+
+// 全局单例
+const breakerManager = new CircuitBreakerManager();
+
+// 注册默认熔断器
+breakerManager.register('llm_extraction', {
+  failureThreshold: 20,  // 提高阈值，减少临时故障触发熔断
+  successThreshold: 3,
+  timeoutMs: 60000,
+  halfOpenMaxCalls: 5,
+});
+
+breakerManager.register('vector_search', {
+  failureThreshold: 3,
+  successThreshold: 1,
+  timeoutMs: 30000,
+  halfOpenMaxCalls: 5,
+});
+
+breakerManager.register('neo4j_sync', {
+  failureThreshold: 5,
+  successThreshold: 2,
+  timeoutMs: 120000,
+  halfOpenMaxCalls: 3,
+});
+
+// 基础设施独立熔断器（各自独立，不互相影响）
+breakerManager.register('postgres', {
+  failureThreshold: 3,
+  successThreshold: 2,
+  timeoutMs: 60000,
+  halfOpenMaxCalls: 3,
+});
+
+breakerManager.register('redis', {
+  failureThreshold: 3,
+  successThreshold: 2,
+  timeoutMs: 30000,
+  halfOpenMaxCalls: 5,
+});
+
+breakerManager.register('neo4j', {
+  failureThreshold: 3,
+  successThreshold: 2,
+  timeoutMs: 60000,
+  halfOpenMaxCalls: 3,
+});
+
+module.exports = {
+  CircuitBreaker,
+  CircuitBreakerManager,
+  CircuitOpenError,
+  breakerManager,
+  STATE,
+};

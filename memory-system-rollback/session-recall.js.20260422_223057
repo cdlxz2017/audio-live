@@ -1,0 +1,968 @@
+/**
+ * Session Recall Service (同步召回通道)
+ * before-completion 时机：查询向量 → pgvector HNSW → 动态加权排序 → 注入 prompt
+ * 
+ * 延迟预算：P99 < 350ms
+ *   Embedding < 30ms + HNSW < 50ms + 排序 < 10ms + 网络 < 255ms
+ * 
+ * v4.1: 双表召回
+ *   - memories: entity/attr/value 格式，有 tenant 隔离
+ *   - personal_memories: content 直存格式，无 tenant 隔离
+ * 
+ * v4.2 (Week 1): 意图分类 8 类 + Redis 缓存 + Graphify 对齐加权
+ * v4.3 (Week 2): Level 2 精排（特征交叉）+ 实体匹配 + 类型匹配
+ */
+
+const crypto = require('crypto');
+const { embedder } = require('./embedder');
+const db = require('./db');
+const config = require('./config');
+const { breakerManager } = require('./circuit-breaker');
+const { getCachedCandidates, cacheCandidates } = require('./redis');
+const { fetchGraphifyContext, extractAlignedIds } = require('./graphify-fetch');
+
+// ─── 意图分类 + 动态权重（v4.2: 8 类扩展） ──────────────────────────
+
+// 旧版 4 类（保留兼容性映射）
+// const QUERY_INTENTS_V1 = {
+//   FACTUAL: 'factual_query',
+//   PREFERENCE: 'preference_query',
+//   EVENT: 'event_recall',
+//   DEFAULT: 'default',
+// };
+
+// 新版 8 类意图
+const QUERY_INTENTS = {
+  FACTUAL:    'FACTUAL',
+  PREFERENCE: 'PREFERENCE',
+  EVENT:      'EVENT',
+  TECHNICAL:  'TECHNICAL',
+  PROJECT:    'PROJECT',
+  PERSON:     'PERSON',
+  REASONING:  'REASONING',
+  DEFAULT:    'DEFAULT',
+};
+
+// 意图 → 旧版权重 key 映射（向后兼容 _logRecall 等）
+const INTENT_TO_LEGACY = {
+  FACTUAL:    'factual_query',
+  PREFERENCE: 'preference_query',
+  EVENT:      'event_recall',
+  TECHNICAL:  'default',
+  PROJECT:    'default',
+  PERSON:     'default',
+  REASONING:  'default',
+  DEFAULT:    'default',
+};
+
+const DEFAULT_WEIGHTS = config.recall.defaultWeights;
+const INTENT_CONFIG = config.intentConfig;
+const INTENT_KEYWORDS = config.intentKeywords;
+const TECHNICAL_PATTERNS = config.intentTechnicalPatterns;
+
+/**
+ * 根据查询文本分类意图（v4.2: 8 类，关键词 + 正则判断）
+ * 优先级：TECHNICAL > PROJECT > EVENT > PREFERENCE > PERSON > REASONING > FACTUAL > DEFAULT
+ */
+function classifyIntent(query) {
+  const q = query.toLowerCase();
+
+  // TECHNICAL: 正则匹配优先（最高优先级）
+  if (TECHNICAL_PATTERNS && TECHNICAL_PATTERNS.some(p => p.test(query))) {
+    return QUERY_INTENTS.TECHNICAL;
+  }
+
+  // PROJECT
+  if (INTENT_KEYWORDS.PROJECT && INTENT_KEYWORDS.PROJECT.some(kw => q.includes(kw))) {
+    return QUERY_INTENTS.PROJECT;
+  }
+
+  // EVENT
+  if (INTENT_KEYWORDS.EVENT && INTENT_KEYWORDS.EVENT.some(kw => q.includes(kw))) {
+    return QUERY_INTENTS.EVENT;
+  }
+
+  // PREFERENCE
+  if (INTENT_KEYWORDS.PREFERENCE && INTENT_KEYWORDS.PREFERENCE.some(kw => q.includes(kw))) {
+    return QUERY_INTENTS.PREFERENCE;
+  }
+
+  // PERSON
+  if (INTENT_KEYWORDS.PERSON && INTENT_KEYWORDS.PERSON.some(kw => q.includes(kw))) {
+    return QUERY_INTENTS.PERSON;
+  }
+
+  // REASONING
+  if (INTENT_KEYWORDS.REASONING && INTENT_KEYWORDS.REASONING.some(kw => q.includes(kw))) {
+    return QUERY_INTENTS.REASONING;
+  }
+
+  // FACTUAL
+  if (INTENT_KEYWORDS.FACTUAL && INTENT_KEYWORDS.FACTUAL.some(kw => q.includes(kw))) {
+    return QUERY_INTENTS.FACTUAL;
+  }
+
+  return QUERY_INTENTS.DEFAULT;
+}
+
+/**
+ * 计算 query 的简单 hash（用于 Redis 缓存 key）
+ */
+function computeQueryHash(query) {
+  return crypto.createHash('md5').update(query.trim().toLowerCase()).digest('hex').substring(0, 16);
+}
+
+/**
+ * 计算时间衰减分数（指数衰减）
+ * 【问题5修复】半衰期参数化，由 INTENT_CONFIG intentCfg.halfLifeHours 控制
+ */
+function timeDecayScore(createdAtMs, halfLifeHours = 2) {
+  const halfLifeMs = halfLifeHours * 60 * 60 * 1000;
+  const ageMs = Date.now() - createdAtMs;
+  return Math.exp(-0.693 * ageMs / halfLifeMs);
+}
+
+/**
+ * 计算最终召回分数
+ * v4.2: 支持 INTENT_CONFIG 新权重 + Graphify 对齐加权
+ * @param {string} intent - 意图类型（8 类）
+ * @param {number} semanticSim - 语义相似度
+ * @param {number} createdAtMs - 记忆创建时间戳
+ * @param {number} confidence - 置信度
+ * @param {Object} options - 额外选项
+ * @param {Set} options.graphifyAlignedIds - Graphify 对齐 ID 集合
+ * @param {string|number} options.candidateId - 当前候选的 ID
+ */
+function computeRecallScore(intent, semanticSim, createdAtMs, confidence, options = {}) {
+  // v4.2: 优先使用 INTENT_CONFIG 新权重，降级到旧权重
+  const intentCfg = INTENT_CONFIG[intent];
+  const legacyKey = INTENT_TO_LEGACY[intent] || 'default';
+  const w = intentCfg ? intentCfg.weights : (DEFAULT_WEIGHTS[legacyKey] || DEFAULT_WEIGHTS['default']);
+
+  // 【问题5修复】时间分层精排：意图级别半衰期 + 时间窗口 + 分层系数
+  const halfLifeHours = intentCfg?.halfLifeHours || 2;
+  const timeWindowHours = intentCfg?.timeWindowHours || 24;
+  const recentMultiplier = intentCfg?.recentMultiplier || 1.0;
+  const mediumDecay = intentCfg?.mediumDecay || 1.0;
+
+  const timeScore = timeDecayScore(createdAtMs, halfLifeHours);
+  const ageHours = (Date.now() - createdAtMs) / (1000 * 60 * 60);
+
+  // 时间分层系数（仅在窗口内生效，超过窗口降为极低权重）
+  let timeMultiplier = 1.0;
+  if (ageHours <= 1) {
+    timeMultiplier = recentMultiplier;          // 1h内强化
+  } else if (ageHours <= timeWindowHours) {
+    timeMultiplier = mediumDecay;              // 1h~窗口内降权
+  } else {
+    timeMultiplier = 0.05;                     // 超过窗口，极低权重
+  }
+
+  let baseScore = w.semantic * semanticSim +
+    w.time_decay * timeScore * timeMultiplier +
+    w.confidence * confidence;
+
+  // Graphify 对齐加权（+0.1 分）
+  const { graphifyAlignedIds, candidateId } = options;
+  const graphifyBonus = (graphifyAlignedIds && candidateId && graphifyAlignedIds.has(candidateId)) ? 0.1 : 0;
+
+  return {
+    total: round(baseScore + graphifyBonus, 6),
+    breakdown: { semantic: w.semantic, time: w.time_decay, confidence: w.confidence, graphifyBonus },
+  };
+}
+
+function round(val, decimals) {
+  return Math.round(val * 10 ** decimals) / 10 ** decimals;
+}
+
+// ─── Week 2: Level 2 精排（特征交叉） ────────────────────────────
+
+/**
+ * 意图类型与 memory_type 匹配映射
+ * 用于 Level 2 精排加分
+ */
+const INTENT_MEMORY_TYPE_MAPPING = {
+  TECHNICAL:  ['technical', 'code', 'config', 'debug', 'api'],
+  PROJECT:    ['project', 'plan', 'milestone', 'sprint'],
+  PREFERENCE: ['preference', 'habit', 'style', 'setting'],
+  EVENT:      ['event', 'fact', 'decision', 'meeting'],
+  PERSON:     ['person', 'contact', 'team', 'user'],
+  REASONING:  ['reasoning', 'analysis', 'decision', 'strategy'],
+  FACTUAL:    ['fact', 'knowledge', 'definition'],
+  DEFAULT:    [],
+};
+
+/**
+ * 判断意图类型是否与记忆类型匹配
+ * @param {string} intent - 意图类型 (8 类)
+ * @param {string} memoryType - 记忆的 memory_type 字段
+ * @returns {boolean}
+ */
+function isMemoryTypeMatch(intent, memoryType) {
+  if (!intent || !memoryType) return false;
+  const mapping = INTENT_MEMORY_TYPE_MAPPING[intent];
+  if (!mapping || mapping.length === 0) return false;
+  return mapping.some(t => memoryType.toLowerCase().includes(t));
+}
+
+/**
+ * Level 2 精排：特征交叉评分
+ * 在基础 computeRecallScore 之上增加实体匹配、类型匹配加分
+ * 
+ * 特征项：
+ * - 语义相似度（向量余弦）
+ * - 时间衰减（指数，半衰期 7 天）
+ * - 置信度
+ * - Graphify 对齐（+0.1，已有）
+ * - 实体匹配：候选的 entity/attribute 与 query 关键词重叠 +0.05
+ * - 类型匹配：intent 类型与 memory_type 匹配 +0.05
+ * 
+ * @param {Array} scoredCandidates - 已经过基础评分的候选列表
+ * @param {string} query - 原始查询
+ * @param {string} intent - 意图类型
+ * @returns {Array} 重排序后的候选列表
+ */
+function level2Rerank(scoredCandidates, query, intent) {
+  // 提取 query 关键词（过滤掉太短的词，减少噪音）
+  const queryWords = new Set(
+    query.toLowerCase().split(/[\s|]+/).filter(w => w.length >= 2)
+  );
+
+  return scoredCandidates.map(c => {
+    const baseScore = c.score;
+
+    // 实体匹配加分：候选的 entity/attribute 与 query 关键词重叠
+    const entityWords = new Set([
+      ...((c.entity || '').toLowerCase().split(/\s+/).filter(w => w.length >= 2)),
+      ...((c.attribute || '').toLowerCase().split(/\s+/).filter(w => w.length >= 2)),
+    ]);
+    const entityMatchCount = [...queryWords].filter(w => entityWords.has(w)).length;
+    const entityBonus = entityMatchCount > 0 ? 0.05 : 0;
+
+    // 类型匹配加分：intent 与 memory_type 匹配
+    const typeMatch = isMemoryTypeMatch(intent, c.memory_type);
+    const typeBonus = typeMatch ? 0.05 : 0;
+
+    return {
+      ...c,
+      score: round(baseScore + entityBonus + typeBonus, 6),
+      entityMatch: entityMatchCount,
+      typeMatch,
+    };
+  }).sort((a, b) => b.score - a.score);
+}
+
+// ─── Recall Service ───────────────────────────────────────────────
+
+class RecallService {
+  constructor() {
+    this._breaker = breakerManager.get('vector_search');
+  }
+
+  /**
+   * 召回记忆（双表）
+   * v4.2: Redis 缓存 + Graphify 并行触发 + 8 类意图加权
+   * @param {Object} params
+   * @param {string} params.tenantId - 租户 ID
+   * @param {string} params.userId - 用户 ID
+   * @param {string} params.query - 查询文本
+   * @param {Object} params.context - 额外上下文
+   * @param {number} params.topK - 返回数量，默认 5
+   * @param {number} params.candidateK - 候选数量，默认 20
+   * @returns {Promise<Array>} RecalledMemory[]
+   */
+  /**
+   * 召回记忆（双表）
+   * v4.2: Redis 缓存 + Graphify 并行触发 + 8 类意图加权
+   * @param {Object} params
+   * @param {string} params.tenantId - 租户 ID
+   * @param {string} params.userId - 用户 ID
+   * @param {string} params.query - 查询文本
+   * @param {Object} params.context - 额外上下文
+   * @param {number} params.topK - 返回数量，默认 5
+   * @param {number} params.candidateK - 候选数量，默认 20
+   * @returns {Promise<{memories: Array, graphify: Object|null, intent: string}>
+   *          返回对象含 memories 数组、graphify 结果、intent 类型
+   */
+  async recall({ tenantId, userId, query, context = {}, topK = 5, candidateK = 20, shouldGraphify: forcedGraphify, graphifyTopK: forcedTopK, source = 'user', sessionId = null }) {
+    const startTime = Date.now();
+    const intent = classifyIntent(query);
+    const intentCfg = INTENT_CONFIG[intent] || INTENT_CONFIG.DEFAULT;
+
+    // ── v4.2: Redis 缓存查询 ──────────────────────────────
+    const queryHash = computeQueryHash(query);
+    try {
+      const cached = await getCachedCandidates(queryHash);
+      if (cached && cached.length > 0) {
+        console.log(`[Recall] Cache HIT for intent=${intent} hash=${queryHash}`);
+        // 异步记录缓存命中日志（不阻塞返回）
+        const totalTime = Date.now() - startTime;
+        this._logRecall({
+          tenantId, userId, query, intent,
+          queryVec: [], results: cached,
+          latencyMs: totalTime,
+          embedMs: 0, searchMs: 0,
+          cacheHit: true,
+          source,
+          sessionId,
+          sources: ['memory_summaries'],
+        }).catch(err => console.error('[Recall] Log failed:', err.message));
+        // v4.2: 返回对象格式（hook 需要 graphify 和 intent）
+        return { memories: cached, graphify: null, intent };
+      }
+    } catch (cacheErr) {
+      console.warn('[Recall] Cache read failed:', cacheErr.message);
+    }
+
+    // 1. 生成查询向量 (< 30ms)
+    const queryVec = await embedder.embed(query);
+    const embedTime = Date.now() - startTime;
+
+    // 2. 双表并行 pgvector HNSW 检索 (< 50ms)
+    //    memory_summaries（对话摘要） + personal_memories（原始对话存档）
+    //    注意：memories 表不再参与 recall，由用户直接告知的记忆走 memory-writer 写入路径
+    //    + v4.2: Graphify 并行触发（仅 TECHNICAL/PROJECT 类）
+
+    // ── 简化召回：只查 memory_summaries（2026-04-16）──
+    // personal_memories 和 memories 表不再参与普通召回
+    // cascadeRecall 路径保留多表查询能力，供跨表检索时使用
+    console.log(`[Recall] Summaries-only mode (candidateK=${candidateK})`);
+
+    // 支持 handler.js 传入的 shouldGraphify/graphifyTopK 覆盖配置
+    const shouldGraphify = forcedGraphify !== undefined ? forcedGraphify : (intentCfg.graphify === true);
+    const graphifyTopK = forcedTopK !== undefined ? forcedTopK : (intentCfg.graphify_topK || 3);
+
+    const parallelTasks = [
+      this._vectorSearchSummaries(queryVec, candidateK),
+    ];
+
+    // Graphify 并行触发（不阻塞 HNSW）
+    if (shouldGraphify) {
+      parallelTasks.push(fetchGraphifyContext(query, graphifyTopK));
+    }
+
+    const parallelResults = await Promise.all(parallelTasks);
+    const summaryCandidates = parallelResults[0];
+    const graphifyResults = shouldGraphify ? parallelResults[1] : null;
+
+    const searchTime = Date.now() - startTime - embedTime;
+
+    if (!summaryCandidates.length) {
+      return { memories: [], graphify: graphifyResults, intent };
+    }
+
+    // 3. 动态加权排序 + 冲突过滤 + Graphify 对齐加权 (< 10ms)
+    const graphifyAlignedIds = extractAlignedIds(graphifyResults);
+    const scored = [];
+    const nowMs = Date.now();
+
+    for (const c of summaryCandidates) {
+      const createdAtMs = new Date(c.created_at).getTime();
+      const ageHours = (nowMs - createdAtMs) / (1000 * 60 * 60);
+
+      // 转换 embedding 相似度
+      const semanticSim = 1 - parseFloat(c.embedding_cosine_distance);
+
+      const { total, breakdown } = computeRecallScore(
+        intent,
+        semanticSim,
+        createdAtMs,
+        parseFloat(c.confidence),
+        { graphifyAlignedIds, candidateId: c.id },
+      );
+
+      scored.push({
+        id: c.id,
+        entity: c.entity,
+        attribute: c.attribute,
+        value: c.value,
+        memory_type: c.memory_type,
+        raw_text: c.raw_text,
+        confidence: parseFloat(c.confidence),
+        score: total,
+        breakdown,
+        age_hours: round(ageHours, 2),
+        is_active: c.is_active,
+        superseded_by: c.superseded_by,
+        created_at: c.created_at,
+        _table: c._table,
+      });
+    }
+
+    // ── v4.3 (Week 2): Level 2 精排 — 特征交叉重排序 ──
+    // 原有逻辑（保留注释）:
+    // scored.sort((a, b) => b.score - a.score);
+    const reranked = level2Rerank(scored, query, intent);
+
+    // 过滤被取代的记忆
+    const results = [];
+    for (const item of reranked) {
+      if (!item.is_active) continue; // 跳过被取代的
+      results.push({
+        id: item.id,
+        entity: item.entity,
+        attribute: item.attribute,
+        value: item.value,
+        memory_type: item.memory_type,
+        raw_text: item.raw_text,
+        score: item.score,
+        confidence: item.confidence,
+        age_hours: item.age_hours,
+        created_at: item.created_at,
+        _table: item._table,
+      });
+      if (results.length >= topK) break;
+    }
+
+    const totalTime = Date.now() - startTime;
+
+    // ── v4.2: 缓存结果 ────────────────────────────────
+    cacheCandidates(queryHash, results).catch(err =>
+      console.warn('[Recall] Cache write failed:', err.message)
+    );
+
+    // 4. 异步记录召回日志（不阻塞返回）
+    this._logRecall({
+      tenantId, userId, query, intent,
+      queryVec, results,
+      latencyMs: totalTime,
+      embedMs: embedTime,
+      searchMs: searchTime,
+      source,
+      sessionId,
+      sources: ['memory_summaries'],
+    }).catch(err => console.error('[Recall] Log failed:', err.message));
+
+    // 延迟超限警告
+    const budget = config.recall.latencyBudget;
+    if (totalTime > budget.embedding + budget.hnsw + budget.sort + budget.prompt + budget.network) {
+      console.warn(`[Recall] Latency ${totalTime}ms exceeds budget`);
+    }
+
+    // ── v4.2: 返回对象格式（含 graphify 结果供 hook 注入） ────
+    return { memories: results, graphify: graphifyResults, intent };
+  }
+
+  /**
+   * pgvector HNSW 检索 - memories 表（有 tenant 隔离）
+   * @param {string} tenantId - 租户 ID
+   * @param {Array} queryVec - 查询向量
+   * @param {number} limit - 返回数量
+   * @param {Object} options - 可选参数
+   * @param {string[]} options.entities - 实体关键词列表，用于 WHERE IN 过滤（级联召回 Phase 2）
+   */
+  async _vectorSearchMemories(tenantId, queryVec, limit, options = {}) {
+    const entities = options.entities || null;
+    return await this._breaker.call(async () => {
+      let sql, params;
+      if (entities && entities.length > 0) {
+        // 有实体过滤：entity 精确匹配 + 向量排序
+        const placeholders = entities.map((_, i) => `$${3 + i}`).join(', ');
+        sql = `
+          SELECT 
+            id, entity, attribute, value, memory_type,
+            raw_text, confidence, is_active, superseded_by,
+            created_at,
+            embedding <=> $1::vector AS embedding_cosine_distance
+          FROM memories
+          WHERE tenant_id = $2
+            AND is_active = TRUE
+            AND embedding IS NOT NULL
+            AND entity IN (${placeholders})
+          ORDER BY embedding <=> $1::vector
+          LIMIT $3
+        `;
+        params = [`[${queryVec.join(',')}]`, tenantId, limit, ...entities];
+      } else {
+        // 纯向量搜索（向后兼容）
+        sql = `
+          SELECT 
+            id, entity, attribute, value, memory_type,
+            raw_text, confidence, is_active, superseded_by,
+            created_at,
+            embedding <=> $1::vector AS embedding_cosine_distance
+          FROM memories
+          WHERE tenant_id = $2
+            AND is_active = TRUE
+            AND embedding IS NOT NULL
+          ORDER BY embedding <=> $1::vector
+          LIMIT $3
+        `;
+        params = [`[${queryVec.join(',')}]`, tenantId, limit];
+      }
+      const result = await db.query(sql, params);
+      return result.rows.map(r => ({ ...r, _table: 'memories' }));
+    }, async () => {
+      // 熔断降级：纯时间排序
+      console.warn('[Recall] Memories falling back to time-sort recall');
+      const sql = `
+        SELECT 
+          id, entity, attribute, value, memory_type,
+          raw_text, confidence, is_active, superseded_by,
+          created_at,
+          1.0 AS embedding_cosine_distance
+        FROM memories
+        WHERE tenant_id = $1
+          AND is_active = TRUE
+        ORDER BY updated_at DESC
+        LIMIT $2
+      `;
+      const result = await db.query(sql, [tenantId, limit]);
+      return result.rows.map(r => ({ ...r, _table: 'memories' }));
+    });
+  }
+
+  /**
+   * pgvector HNSW 检索 - memory_summaries 表（新B表，最高优先级）
+   * @param {Array} queryVec - 查询向量
+   * @param {number} limit - 返回数量
+   * @param {Object} options - 可选参数
+   * @param {number} options.recentHours - 时间窗口（小时），null 表示不过滤
+   */
+  async _vectorSearchSummaries(queryVec, limit, options = {}) {
+    const recentHours = options.recentHours || null;
+    return await this._breaker.call(async () => {
+      let sql, params;
+      if (recentHours) {
+        sql = `
+          SELECT 
+            id,
+            'memory_summary' AS entity,
+            summary_type AS attribute,
+            summary AS value,
+            summary_type AS memory_type,
+            summary AS raw_text,
+            COALESCE(confidence, 0.8) AS confidence,
+            TRUE AS is_active,
+            NULL::bigint AS superseded_by,
+            created_at,
+            embedding <=> $1::vector AS embedding_cosine_distance
+          FROM memory_summaries
+          WHERE embedding IS NOT NULL
+            AND is_active = TRUE
+            AND created_at > NOW() - INTERVAL '${recentHours} hours'
+          ORDER BY embedding <=> $1::vector
+          LIMIT $2
+        `;
+        params = [`[${queryVec.join(',')}]`, limit];
+      } else {
+        sql = `
+          SELECT 
+            id,
+            'memory_summary' AS entity,
+            summary_type AS attribute,
+            summary AS value,
+            summary_type AS memory_type,
+            summary AS raw_text,
+            COALESCE(confidence, 0.8) AS confidence,
+            TRUE AS is_active,
+            NULL::bigint AS superseded_by,
+            created_at,
+            embedding <=> $1::vector AS embedding_cosine_distance
+          FROM memory_summaries
+          WHERE embedding IS NOT NULL
+            AND is_active = TRUE
+          ORDER BY embedding <=> $1::vector
+          LIMIT $2
+        `;
+        params = [`[${queryVec.join(',')}]`, limit];
+      }
+      const result = await db.query(sql, params);
+      return result.rows.map(r => ({ ...r, _table: 'memory_summaries' }));
+    }, async () => {
+      // 熔断降级
+      console.warn('[Recall] memory_summaries falling back to time-sort recall');
+      const sql = `
+        SELECT 
+          id,
+          'memory_summary' AS entity,
+          summary_type AS attribute,
+          summary AS value,
+          summary_type AS memory_type,
+          summary AS raw_text,
+          COALESCE(confidence, 0.8) AS confidence,
+          TRUE AS is_active,
+          NULL::bigint AS superseded_by,
+          created_at,
+          1.0 AS embedding_cosine_distance
+        FROM memory_summaries
+        WHERE is_active = TRUE
+        ORDER BY created_at DESC
+        LIMIT $1
+      `;
+      const result = await db.query(sql, [limit]);
+      return result.rows.map(r => ({ ...r, _table: 'memory_summaries' }));
+    });
+  }
+
+  /**
+   * 
+   * personal_memories 字段映射到 memories 格式：
+   *   category       → entity
+   *   'content'     → attribute
+   *   content        → value
+   *   importance_score → confidence
+   *   origin_session_id → raw_text
+   */
+  async _vectorSearchPersonal(queryVec, limit) {
+    // T0.3: 排除低召回价值的 tech-doc 和 dialogue 类型，降低 P99 延迟
+    const EXCLUDED_CATEGORIES = ['tech-doc', 'dialogue'];
+    return await this._breaker.call(async () => {
+      const sql = `
+        SELECT 
+          id,
+          category AS entity,
+          'content' AS attribute,
+          content AS value,
+          category AS memory_type,
+          origin_session_id AS raw_text,
+          LEAST(COALESCE(importance_score, 0.8) / 10.0, 1.0) AS confidence,
+          TRUE AS is_active,
+          NULL::bigint AS superseded_by,
+          created_at,
+          embedding <=> $1::vector AS embedding_cosine_distance
+        FROM personal_memories
+        WHERE embedding IS NOT NULL
+          AND is_deleted IS DISTINCT FROM TRUE
+          AND category NOT IN ('tech-doc', 'dialogue')
+          AND importance_score >= 5.0
+        ORDER BY embedding <=> $1::vector
+        LIMIT $2
+      `;
+      const result = await db.query(sql, [`[${queryVec.join(',')}]`, limit]);
+      return result.rows.map(r => ({ ...r, _table: 'personal_memories' }));
+    }, async () => {
+      // 熔断降级：纯时间排序
+      console.warn('[Recall] personal_memories falling back to time-sort recall');
+      const sql = `
+        SELECT 
+          id,
+          category AS entity,
+          'content' AS attribute,
+          content AS value,
+          category AS memory_type,
+          origin_session_id AS raw_text,
+          LEAST(COALESCE(importance_score, 0.8) / 10.0, 1.0) AS confidence,
+          TRUE AS is_active,
+          NULL::bigint AS superseded_by,
+          created_at,
+          1.0 AS embedding_cosine_distance
+        FROM personal_memories
+        WHERE is_deleted IS DISTINCT FROM TRUE
+          AND category NOT IN ('tech-doc', 'dialogue')
+          AND importance_score >= 5.0
+        ORDER BY created_at DESC
+        LIMIT $1
+      `;
+      const result = await db.query(sql, [limit]);
+      return result.rows.map(r => ({ ...r, _table: 'personal_memories' }));
+    });
+  }
+
+  /**
+   * 从摘要文本中提取关键词/实体
+   * @param {Array} summaries - 召回的摘要列表
+   * @returns {string[]} 提取的关键词/实体列表
+   */
+  extractEntitiesFromSummaries(summaries) {
+    const entities = new Set();
+    for (const s of summaries) {
+      const text = s.value || s.raw_text || s.summary || '';
+      // 中文关键词：2-8个连续中文字符
+      const zhMatches = text.match(/[\u4e00-\u9fff]{2,8}/g) || [];
+      zhMatches.forEach(w => entities.add(w));
+      // 英文关键词：2-20个连续字母
+      const enMatches = text.match(/\b[a-zA-Z]{2,20}\b/g) || [];
+      enMatches.forEach(w => entities.add(w.toLowerCase()));
+      // 已有的 entity 字段也加入
+      if (s.entity && s.entity !== 'memory_summary') {
+        entities.add(s.entity);
+      }
+      // memory_type 也加入
+      if (s.memory_type) {
+        entities.add(s.memory_type);
+      }
+    }
+    return [...entities].slice(0, 15); // 限制最多15个，避免 IN 子句过长
+  }
+
+  /**
+   * 追溯原始记录：从摘要/记忆 → summary_message_links → conversation_messages
+   * @param {Array} summaries - 召回的摘要列表
+   * @param {Array} relatedMemories - 召回的结构化记忆列表
+   * @param {number} maxRecords - 最大返回原始记录数
+   * @returns {Promise<Array>} 原始对话记录
+   */
+  async _traceToOriginal(summaries, relatedMemories, maxRecords = 6) {
+    const sourceIds = new Set();
+
+    // 从摘要的 source_message_ids 收集
+    for (const s of summaries) {
+      if (s.id) {
+        try {
+          const links = await db.query(
+            `SELECT source_message_ids FROM summary_message_links WHERE summary_id = $1 LIMIT 10`,
+            [s.id]
+          );
+          for (const row of links.rows) {
+            if (Array.isArray(row.source_message_ids)) {
+              row.source_message_ids.forEach(id => sourceIds.add(String(id)));
+            }
+          }
+        } catch (err) {
+          console.warn(`[cascadeRecall] Failed to trace summary ${s.id}: ${err.message}`);
+        }
+      }
+    }
+
+    // 从记忆的 source_message_id 收集
+    for (const m of relatedMemories) {
+      if (m.source_message_id) {
+        sourceIds.add(String(m.source_message_id));
+      }
+    }
+
+    if (sourceIds.size === 0) return [];
+
+    const idArray = [...sourceIds].slice(0, maxRecords * 2);
+    const records = await db.query(
+      `SELECT id, session_id, role, content, created_at
+       FROM conversation_messages
+       WHERE id = ANY($1::bigint[])
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [idArray, maxRecords]
+    );
+
+    return records.rows.map(r => ({
+      id: r.id,
+      sessionId: r.session_id,
+      role: r.role,
+      content: (r.content || '').substring(0, 300),
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * 三级级联召回
+   * Phase 1: 3h 内摘要召回（时间窗口 + 向量搜索）
+   * Phase 2: 从摘要提取关键词 → memories 表 entity 匹配
+   * Phase 3: 追溯原始对话记录
+   *
+   * @param {Object} params
+   * @param {string} params.tenantId - 租户 ID
+   * @param {string} params.userId - 用户 ID
+   * @param {string} params.query - 查询文本
+   * @param {Array} params.queryVec - 查询向量
+   * @param {number} params.topK - 最终返回数量
+   * @param {number} params.timeWindowHours - Phase 1 时间窗口（小时），默认 3
+   * @returns {Promise<{summaries: Array, relatedMemories: Array, originalRecords: Array, phaseTimings: Object}>}
+   */
+  async cascadeRecall({ tenantId, userId, query, queryVec, topK = 5, timeWindowHours = 3 }) {
+    const totalStart = Date.now();
+
+    // ── Phase 1: 3h 内摘要召回 ──
+    const phase1Start = Date.now();
+    const summaries = await this._vectorSearchSummaries(queryVec, 10, { recentHours: timeWindowHours });
+    const phase1Time = Date.now() - phase1Start;
+    console.log(`[cascadeRecall] Phase1: ${summaries.length} summaries in ${phase1Time}ms`);
+
+    if (phase1Time > 150) {
+      console.warn('[cascadeRecall] Phase1 exceeded 150ms budget');
+    }
+
+    // ── Phase 2: 关键词提取 → memories 表 entity 匹配 ──
+    const phase2Start = Date.now();
+    const entities = this.extractEntitiesFromSummaries(summaries);
+    let relatedMemories = [];
+    if (entities.length > 0 && queryVec) {
+      relatedMemories = await this._vectorSearchMemories(
+        tenantId, queryVec, 5, { entities }
+      );
+    }
+    const phase2Time = Date.now() - phase2Start;
+    console.log(`[cascadeRecall] Phase2: ${entities.length} entities, ${relatedMemories.length} memories in ${phase2Time}ms`);
+
+    if (phase2Time > 100) {
+      console.warn('[cascadeRecall] Phase2 exceeded 100ms budget');
+    }
+
+    // ── Phase 3: 追溯原始记录 ──
+    const phase3Start = Date.now();
+    const originalRecords = await this._traceToOriginal(summaries, relatedMemories);
+    const phase3Time = Date.now() - phase3Start;
+    console.log(`[cascadeRecall] Phase3: ${originalRecords.length} original records in ${phase3Time}ms`);
+
+    if (phase3Time > 50) {
+      console.warn('[cascadeRecall] Phase3 exceeded 50ms budget');
+    }
+
+    const totalTime = Date.now() - totalStart;
+    console.log(`[cascadeRecall] Total: ${totalTime}ms`);
+
+    return {
+      summaries,
+      relatedMemories,
+      originalRecords,
+      phaseTimings: {
+        phase1: phase1Time,
+        phase2: phase2Time,
+        phase3: phase3Time,
+        total: totalTime,
+      },
+    };
+  }
+
+  /**
+   * 记录召回日志（异步）
+   * 【问题4修复】新增 source 参数，支持 'user' | 'proactive' 来源标记
+   * source 指标写入 Redis Hash（不改表结构），同时追加到 query_text 供日志分析
+   *
+   * 注意：recall_logs.user_id 是 UUID 类型
+   * 传入非 UUID 的 userId（如 'agent:main'）时降级为 NULL
+   */
+  /**
+   * 公开日志记录方法，供外部调用（handler.js 的 cascade/simplified 路径）
+   * @param {Object} params - 同 _logRecall
+   * @param {string[]} params.sources - 每个 ID 对应的来源表名数组
+   */
+  async logRecall({ tenantId, userId, query, intent, queryVec, results, latencyMs, embedMs, searchMs, source = 'user', sessionId = null, sources = [] }) {
+    return this._logRecall({ tenantId, userId, query, intent, queryVec, results, latencyMs, embedMs, searchMs, source, sessionId, sources });
+  }
+
+  async _logRecall({ tenantId, userId, query, intent, queryVec, results, latencyMs, embedMs, searchMs, source = 'user', sessionId = null, sources = [] }) {
+    const recalledIds = results.map(r => r.id);
+    const scores = results.map(r => r.score);
+
+    // 修复：user_id 传 null，sender_id_text 传原始 senderId
+    const safeUserId = null;  // 不再强制转换 UUID
+    const senderIdText = userId;  // 保留原始 senderId 文本
+
+    // pg 驱动对 ARRAY 类型需要显式 cast，转换为 PostgreSQL 数组字符串
+    const recalledIdsStr = recalledIds.length > 0 ? '{' + recalledIds.join(',') + '}' : '{}';
+    const scoresStr = scores.length > 0 ? '{' + scores.map(s => String(s)).join(',') + '}' : '{}';
+    // sources 数组：每个 recalled_ids[i] 的来源表名（支持多表混合），格式为 PostgreSQL text[]
+    const sourcesStr = sources.length > 0 ? "'{" + sources.join(',') + "}'" : '{}';
+
+    // queryVec 为空时（缓存命中路径）传入 NULL，避免 PostgreSQL vector 类型拒绝空数组 []
+    const queryEmbedding = (queryVec && queryVec.length > 0) ? `[${queryVec.join(',')}]` : null;
+
+    const sql = `
+      INSERT INTO recall_logs (
+        tenant_id, user_id, session_id, query_text, query_embedding,
+        recalled_ids, scores, latency_ms, intent, sender_id_text, recalled_sources
+      ) VALUES ($1, $2, $3, $4, $5, $6::integer[], $7::float8[], $8, $9, $10, ${sourcesStr}::text[])
+    `;
+
+    await db.query(sql, [
+      tenantId,
+      safeUserId,        // NULL
+      sessionId,         // Fix 6: 传入真实 session_id，不再硬编码 null
+      query,
+      queryEmbedding,
+      recalledIdsStr,
+      scoresStr,
+      latencyMs,
+      intent,
+      senderIdText,      // 原始 senderId
+    ]);
+
+    // 【问题4修复】source 指标写入 Redis Hash（不改表结构）
+    try {
+      const { getClient } = require('./redis');
+      const redis = getClient();
+      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const metricKey = `recall_metric:${today}`;
+      await redis.hincrby(metricKey, source, 1);
+      await redis.expire(metricKey, 7 * 24 * 3600); // 保留7天
+    } catch (redisErr) {
+      console.warn(`[Recall] Redis metric write failed (non-fatal): ${redisErr.message}`);
+    }
+  }
+}
+
+/**
+ * 按时间倒序加载最近 N 条 memory_summaries（不依赖向量检索）
+ * 用于"最新摘要"注入，优先级高于语义搜索结果
+ * @param {number} limit - 返回条数，默认 5
+ * @returns {Promise<Array>} 格式与 recall() 返回的 memories 一致
+ */
+async function loadRecentSummaries(limit = 5) {
+  try {
+    const result = await db.query(`
+      SELECT
+        id,
+        'memory_summary' AS entity,
+        summary_type AS attribute,
+        summary AS value,
+        summary_type AS memory_type,
+        summary AS raw_text,
+        COALESCE(confidence, 0.8) AS confidence,
+        TRUE AS is_active,
+        NULL::bigint AS superseded_by,
+        created_at,
+        1.0 AS score
+      FROM memory_summaries
+      WHERE is_active = TRUE
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    return result.rows.map(r => ({ ...r, _table: 'memory_summaries' }));
+  } catch (err) {
+    console.warn('[Recall] loadRecentSummaries failed:', err.message);
+    return [];
+  }
+}
+
+// ─── Prompt 注入格式化 ─────────────────────────────────────────────
+
+/**
+ * 将召回结果格式化为 system prompt 片段
+ * 
+ * 支持两种格式：
+ * - memories 表: entity.attribute = value
+ * - personal_memories 表: [category] content (直接显示内容)
+ */
+function buildMemoryPrompt(memories) {
+  if (!memories || memories.length === 0) {
+    return '';
+  }
+
+  const lines = ['[Recalled Memories]'];
+  for (const m of memories) {
+    if (m._table === 'memory_summaries') {
+      // memory_summaries: 直接显示 summary 完整内容
+      const text = m.raw_text || m.summary || '';
+      const type = m.memory_type || 'summary';
+      lines.push(`- [${type}] ${text}`);
+    } else if (m._table === 'personal_memories') {
+      // personal_memories: 直接显示 content
+      const content = m.value || '';
+      lines.push(`- [${m.memory_type}] ${content} (score: ${m.score.toFixed(3)})`);
+    } else {
+      // memories 表: entity.attribute = value
+      lines.push(
+        `- [${m.memory_type}] ${m.entity}.${m.attribute} = ${m.value} (score: ${m.score.toFixed(3)})`
+      );
+    }
+  }
+  lines.push('[End Memories]');
+  return lines.join('\n');
+}
+
+// 单例
+const recallService = new RecallService();
+
+module.exports = {
+  RecallService,
+  recallService,
+  loadRecentSummaries,
+  buildMemoryPrompt,
+  classifyIntent,
+  computeRecallScore,
+  level2Rerank,
+  isMemoryTypeMatch,
+  QUERY_INTENTS,
+};

@@ -1,0 +1,199 @@
+/**
+ * T1.2 - Outbox Pattern 消费者
+ * 
+ * 消费 memory_outbox 表中的事件，异步同步到 personal_memories 和 Neo4j
+ * 每 10 秒轮询一次，处理 pending 事件
+ */
+
+const db = require('./db');
+const config = require('./config');
+
+let _neo4jDriver = null;
+function getNeo4jDriver() {
+  if (!_neo4jDriver) {
+    const neo4j = require('neo4j-driver');
+    _neo4jDriver = neo4j.driver(
+      config.neo4j.uri,
+      neo4j.auth.basic(config.neo4j.auth.username, config.neo4j.auth.password)
+    );
+  }
+  return _neo4jDriver;
+}
+
+const PROCESS_BATCH = 50;
+const POLL_INTERVAL_MS = 10 * 1000;
+
+// 有效的 summary 类型（决定是否写入 personal_memories）
+const VALUABLE_TYPES = [
+  'decision', 'plan', 'event', 'factual', 'preference',
+  'technical', 'instruction', 'request', 'recommendation', 'suggestion'
+];
+
+async function processOutbox() {
+  const events = await db.query(`
+    SELECT * FROM memory_outbox
+    WHERE status = 'pending'
+    ORDER BY created_at ASC
+    LIMIT $1
+  `, [PROCESS_BATCH]);
+
+  if (events.rows.length === 0) return 0;
+
+  let processed = 0;
+  for (const event of events.rows) {
+    try {
+      const payload = event.payload;
+      
+      // 防御：summary 字段缺失时标记 skipped，不无限失败
+      if (!payload.summary) {
+        await db.query(
+          `UPDATE memory_outbox SET status = 'skipped', processed_at = NOW() WHERE id = $1`,
+          [event.id]
+        );
+        processed++;
+        continue;
+      }
+      
+      // 1. 写 personal_memories（仅 VALUABLE_TYPES）
+      let pmId = null;
+      if (VALUABLE_TYPES.includes(payload.type)) {
+        const sourceIdsJson = JSON.stringify(payload.source_message_ids || []);
+        const existing = await db.query(
+          `SELECT id FROM personal_memories WHERE source_ids = $1::jsonb LIMIT 1`,
+          [sourceIdsJson]
+        );
+        if (existing.rows.length === 0) {
+          const pmResult = await db.query(`
+            INSERT INTO personal_memories (
+              content, category, insight_type, embedding, embedding_model,
+              source_ids, origin_session_id, confidence, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            RETURNING id
+          `, [
+            payload.summary,
+            payload.type,
+            payload.type,
+            payload.embedding,
+            'bge-m3',
+            sourceIdsJson,
+            payload.source_session_id,
+            payload.confidence || 0.8,
+          ]);
+          pmId = pmResult.rows[0].id;
+        }
+      }
+
+      // 🔗 Trace Chain: 记录 personal_memories 写入
+      if (pmId) {
+        try {
+          await db.query(`
+            INSERT INTO trace_chain (trace_id, item_type, stage, ref_id, checksum, metadata)
+            VALUES ($1, 'personal', 'personal_stored', $2, md5($3), $4)
+          `, [
+            `sum-${payload.summary_id}`,
+            pmId,
+            payload.summary,
+            JSON.stringify({ outbox_id: event.id })
+          ]);
+        } catch (traceErr) {
+          console.warn(`[outbox-writer] Trace chain write failed (non-blocking): ${traceErr.message}`);
+        }
+      }
+
+      // 2. 同步 Neo4j PersonalMemory
+      await syncToNeo4j(payload);
+
+      // 🔗 Trace Chain: 记录 Neo4j 同步
+      try {
+        await db.query(`
+          INSERT INTO trace_chain (trace_id, item_type, stage, ref_id, checksum, metadata)
+          VALUES ($1, 'neo4j', 'neo4j_synced', $2, md5($3), $4)
+        `, [
+          `sum-${payload.summary_id}`,
+          payload.summary_id,
+          payload.summary,
+          JSON.stringify({ outbox_id: event.id, node_id: `memory_summary_${payload.summary_id}` })
+        ]);
+      } catch (traceErr) {
+        console.warn(`[outbox-writer] Trace chain write failed (non-blocking): ${traceErr.message}`);
+      }
+
+      // 3. 标记已处理
+      await db.query(
+        `UPDATE memory_outbox SET status = 'processed', processed_at = NOW() WHERE id = $1`,
+        [event.id]
+      );
+      processed++;
+
+    } catch (err) {
+      console.error(`[outbox-writer] Failed to process event ${event.id}:`, err.message);
+      // 标记失败，但不无限重试
+      await db.query(
+        `UPDATE memory_outbox SET status = 'failed', processed_at = NOW() WHERE id = $1`,
+        [event.id]
+      );
+    }
+  }
+
+  return processed;
+}
+
+async function syncToNeo4j(payload) {
+  const driver = getNeo4jDriver();
+  const session = driver.session({ database: config.neo4j.database });
+  const nodeId = `memory_summary_${payload.summary_id}`;
+
+  try {
+    await session.run(`
+      MERGE (m:PersonalMemory {node_id: $nodeId})
+      SET m.id = $id,
+          m.category = $category,
+          m.entity = $entity,
+          m.attribute = 'summary',
+          m.value = $value,
+          m.content = $content,
+          m.confidence = $confidence,
+          m.origin_session_id = $sessionId,
+          m.created_at = datetime($createdAt),
+          m.updated_at = datetime()
+    `, {
+      nodeId: String(nodeId),
+      id: String(payload.summary_id),
+      category: String(payload.type || 'other'),
+      entity: String(payload.type || 'other'),
+      value: (payload.summary || '').substring(0, 200),
+      content: String(payload.summary || ''),
+      confidence: parseFloat(payload.confidence || 0.8),
+      sessionId: payload.source_session_id ? String(payload.source_session_id) : null,
+      createdAt: payload.timestamp || new Date().toISOString(),
+    });
+  } finally {
+    await session.close();
+  }
+}
+
+async function runContinuous() {
+  console.log('[outbox-writer] Starting continuous mode (poll every 10s)');
+  
+  while (true) {
+    try {
+      const count = await processOutbox();
+      if (count > 0) {
+        console.log(`[outbox-writer] Processed ${count} events`);
+      }
+    } catch (err) {
+      console.error('[outbox-writer] Error:', err.message);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+}
+
+if (require.main === module) {
+  runContinuous().catch(err => {
+    console.error('[outbox-writer] Fatal error:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { processOutbox, syncToNeo4j };

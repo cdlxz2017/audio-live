@@ -166,3 +166,35 @@ node audit-scripts/audit-monitor.js                         # 监控检查
 ```
 
 **存储位置**：`/home/ai/.openclaw/audit/YYYY-MM-DD.jsonl`（权限 600）
+
+## Thread 系统 API（problem-thread）
+
+**Base URL**: `http://localhost:54321`
+
+### 更新 Thread 阶段
+```bash
+curl -s -X PATCH "http://localhost:54321/threads/<id>/stage" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "stage": "implementation",
+    "content": { "description": "已完成：..." }
+  }'
+```
+- `stage` 可选值：`problem` | `analysis` | `decision` | `implementation` | `verification`
+- `content` 对象会 JSON.stringify 存入 `stage_<stage>` 字段
+
+### 更新 Thread 状态
+```bash
+curl -s -X PATCH "http://localhost:54321/threads/<id>/status" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"completed"}'
+```
+- `status` 可选值：`new` | `active` | `completed`
+
+### 查询 Thread
+```bash
+curl -s "http://localhost:54321/threads?status=active"
+curl -s "http://localhost:54321/threads/<id>"
+```
+
+**Thread ID 查询**：先 GET `/threads?status=active` 找到目标 Thread 的 id，再做后续操作。

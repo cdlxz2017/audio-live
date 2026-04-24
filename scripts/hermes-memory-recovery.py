@@ -109,6 +109,11 @@ def write_entry_to_pg(conn, entry: dict, dry_run: bool = False) -> bool:
     if memory_type == "session_summary":
         return write_summary_to_pg(conn, entry, dry_run)
 
+    # P0 FIX: dry_run 时 conn 为 None，跳过数据库操作
+    if dry_run:
+        log.info(f"  DRY-RUN would write: {entity}/{attr} [{memory_type}] @ {timestamp[:19]}")
+        return True
+
     cur = conn.cursor()
 
     # Deduplication check
@@ -117,19 +122,17 @@ def write_entry_to_pg(conn, entry: dict, dry_run: bool = False) -> bool:
         cur.close()
         return False
 
-    if dry_run:
-        log.info(f"  DRY-RUN would write: {entity}/{attr} [{memory_type}] @ {timestamp[:19]}")
-        cur.close()
-        return True
-
     # Generate embedding
     embedding = get_embedding(content)
     vec_str = "[" + ",".join(map(str, embedding)) + "]" if embedding else None
 
+    # P1 FIX: memories.user_id 是 NOT NULL，从 entry 获取或用系统零值 UUID
+    user_id = entry.get("user_id") or "00000000-0000-0000-0000-000000000000"
+
     cur.execute("""
-        INSERT INTO memories (entity, attribute, value, raw_text, memory_type, embedding, source)
-        VALUES (%s, %s, %s, %s, %s, %s::vector, %s)
-    """, (entity, attr, content, content, memory_type, vec_str, source))
+        INSERT INTO memories (user_id, entity, attribute, value, raw_text, memory_type, embedding, source)
+        VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s)
+    """, (user_id, entity, attr, content, content, memory_type, vec_str, source))
 
     conn.commit()
     cur.close()
@@ -168,6 +171,20 @@ def recover_from_redis(dry_run: bool = False) -> int:
 
     log.info(f"Redis queue has {queue_len} pending entries")
 
+    # P0 FIX: dry-run 不出队，只读不消费
+    if dry_run:
+        items = r.lrange(REDIS_QUEUE, 0, -1)
+        would_recover = 0
+        for raw in items:
+            try:
+                entry = json.loads(raw)
+                if write_entry_to_pg(None, entry, dry_run=True):
+                    would_recover += 1
+            except Exception as e:
+                log.error(f"DRY-RUN parse error: {e}")
+        log.info(f"DRY-RUN: {would_recover} would be recovered, queue unchanged")
+        return would_recover
+
     conn = get_pg()
     recovered = 0
     skipped = 0
@@ -181,7 +198,7 @@ def recover_from_redis(dry_run: bool = False) -> int:
 
         try:
             entry = json.loads(raw)
-            if write_entry_to_pg(conn, entry, dry_run=dry_run):
+            if write_entry_to_pg(conn, entry, dry_run=False):
                 recovered += 1
             else:
                 skipped += 1

@@ -1,0 +1,324 @@
+/**
+ * Memory System Configuration
+ * v4.2 - 2026-04-20
+ * 变更：新增中央凭证加载器作为 fallback
+ */
+
+const path = require('path');
+const os = require('os');
+
+// 尝试加载中央凭证读取器（失败不影响，继续用 env）
+let _credLoader = null;
+try {
+  const loaderPath = path.join(os.homedir(), '.openclaw', 'credentials', 'loader.js');
+  if (require.resolve(loaderPath)) {
+    _credLoader = require(loaderPath);
+  }
+} catch (e) {
+  // 中央凭证加载失败，不影响正常运行
+}
+
+const getDbPassword = () => _credLoader ? _credLoader.getDbPassword('') : '';
+const getNeo4jPassword = () => _credLoader ? _credLoader.getNeo4jPassword('') : '';
+
+module.exports = {
+  // PostgreSQL
+  database: {
+    host: process.env.PGHOST || 'localhost',
+    port: parseInt(process.env.PGPORT || '5432'),
+    user: process.env.PGUSER || 'openclaw_ai',
+    password: process.env.PGPASSWORD || getDbPassword() || 'zyxrcy910128',
+    database: process.env.PGDATABASE || 'openclaw_memory',
+    pool: {
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    },
+  },
+
+  // Redis
+  redis: {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    streams: {
+      messages: 'memory:messages',
+      sessions: 'memory:sessions',
+      memoryTasks: 'memory:messages',
+      graphSync: 'graph:sync:events',
+      deadLetter: 'memory:deadletter',
+      retryQueue: 'memory:retry',
+    },
+    consumer: {
+      group: 'memory-workers',
+      consumerId: `worker-${process.pid}`,
+    },
+    graphConsumer: {
+      group: 'graph-linkers',
+      consumerId: `graph-linker-${process.pid}`,
+    },
+  },
+
+  // Neo4j
+  neo4j: {
+    uri: process.env.NEO4J_URI || 'bolt://localhost:7687',
+    auth: {
+      username: process.env.NEO4J_USER || 'neo4j',
+      password: process.env.NEO4J_PASSWORD || getNeo4jPassword() || 'openclaw_neo4j_2026',
+    },
+    database: 'neo4j',
+    connection: {
+      maxConnectionLifetime: 3600000,
+      maxConnectionPoolSize: 50,
+      connectionAcquisitionTimeout: 60000,
+    },
+  },
+
+  // Embedding (Ollama)
+  embedding: {
+    model: process.env.EMBEDDING_MODEL || 'bge-m3',
+    provider: 'ollama',
+    url: process.env.OLLAMA_URL || 'http://localhost:11434',
+    dimensions: 1024,
+    maxTokens: 8192,
+    batchSize: 32,
+    // 性能基准 (单机, RTX 4090)
+    // single_latency_p50: 8ms
+    // single_latency_p99: 25ms
+    // batch_throughput: ~400 queries/sec
+  },
+
+  // LLM (记忆提取用) — 本地 Ollama gemma-4-abliterated:e2b（常驻）
+  llm: {
+    provider: 'ollama',
+    model: 'huihui_ai/gemma-4-abliterated:e2b',
+    apiKey: 'ollama',
+    baseURL: 'http://localhost:11434',
+    timeoutMs: 60000,
+    temperature: 0.1,
+  },
+
+  // 记忆提取
+  extraction: {
+    schedule: '0 2 * * *',       // 每日凌晨 2 点
+    batchSize: 50,
+    maxConcurrency: 4,
+    model: 'minimax/MiniMax-M2.7',
+    llmTimeoutMs: 30000,
+    // 熔断触发后的降级策略
+    fallbackStrategy: 'queue_and_retry',
+    maxRetryAttempts: 3,
+  },
+
+  // 召回配置
+  recall: {
+    maxMemories: 5,               // 返回 top 5
+    candidateK: 20,               // 向量检索候选数
+    timeRangeHours: 168,          // 7 天
+    minConfidence: 0.7,
+    // 动态权重策略（可热更新）
+    defaultWeights: {
+      factual_query: { semantic: 0.4, time_decay: 0.05, confidence: 0.55 },
+      preference_query: { semantic: 0.5, time_decay: 0.2, confidence: 0.3 },
+      event_recall: { semantic: 0.3, time_decay: 0.5, confidence: 0.2 },
+      default: { semantic: 0.5, time_decay: 0.3, confidence: 0.2 },
+    },
+    // 延迟预算 (P99 < 150ms)
+    latencyBudget: {
+      embedding: 30,    // ms
+      hnsw: 50,         // ms
+      sort: 10,         // ms
+      prompt: 5,        // ms
+      network: 255,     // ms ( widened from 55 to 255 for 350ms total budget )
+    },
+  },
+
+  // 熔断器
+  circuitBreaker: {
+    failureThreshold: 5,           // 连续 5 次失败触发熔断
+    successThreshold: 2,           // 半开状态连续 2 次成功关闭熔断
+    timeoutMs: 60000,             // 熔断持续时间
+    halfOpenMaxCalls: 3,          // 半开状态最大探测次数
+  },
+
+  // 冲突解决策略
+  conflict: {
+    factual: 'latest_wins',       // 最新优先
+    preference: 'keep_history',   // 保留历史，降低置信度
+    event: 'expire_after_30d',    // 30 天后过期
+  },
+
+  // 容量规划
+  capacity: {
+    storagePerMemory: 2048,       // bytes (向量 1KB + 元数据 1KB)
+    hnswMemoryPer1M: 1288490188, // ~1.2GB per 1M vectors
+    scalingThresholds: {
+      memoriesPerUser: 10000,
+      vectorIndexSizeGB: 50,
+      recallLatencyP99Ms: 200,
+    },
+  },
+
+  // 多租户
+  tenant: {
+    defaultTenantId: '00000000-0000-0000-0000-000000000000',
+  },
+
+  // 分片
+  sharding: {
+    shardCount: 8,
+  },
+
+  // ─── 意图分类配置（8 类）Week 1 扩展 ──────────────────────────
+  intentConfig: {
+    TECHNICAL: {
+      weights:           { semantic: 0.5, time_decay: 0.1, confidence: 0.4 },
+      prefilter:         ['memories', 'memory_summaries', 'personal_memories'],
+      graphify:          true,
+      graphify_topK:     3,
+      tier:              1,
+      // 【问题5修复】时间分层精排参数
+      halfLifeHours:     4,       // 半衰期4小时（原168h）
+      timeWindowHours:    24,      // 最大窗口24小时
+      recentMultiplier:   1.5,     // 1小时内时间贡献×1.5
+      mediumDecay:       0.5,     // 1-24h内降权系数
+    },
+    PROJECT: {
+      weights:           { semantic: 0.4, time_decay: 0.3, confidence: 0.3 },
+      prefilter:         ['memories', 'memory_summaries', 'personal_memories'],
+      graphify:          true,
+      graphify_topK:     2,
+      tier:              1,
+      halfLifeHours:     4,
+      timeWindowHours:   168,
+      recentMultiplier:   1.3,
+      mediumDecay:       0.6,
+    },
+    REASONING: {
+      weights:           { semantic: 0.4, time_decay: 0.2, confidence: 0.4 },
+      prefilter:         ['memory_summaries', 'memories', 'personal_memories'],
+      graphify:          true,
+      graphify_topK:     2,
+      tier:              2,
+      halfLifeHours:     2,
+      timeWindowHours:   12,
+      recentMultiplier:  1.5,
+      mediumDecay:       0.5,
+    },
+    FACTUAL: {
+      weights:           { semantic: 0.6, time_decay: 0.2, confidence: 0.2 },
+      prefilter:         ['memory_summaries', 'memories', 'personal_memories'],
+      graphify:          false,
+      graphify_topK:     2,
+      tier:              1,
+      halfLifeHours:     2,
+      timeWindowHours:   24,
+      recentMultiplier:  2.0,
+      mediumDecay:       0.4,
+    },
+    PREFERENCE: {
+      weights:           { semantic: 0.3, time_decay: 0.4, confidence: 0.3 },
+      prefilter:         ['personal_memories', 'memory_summaries', 'memories'],
+      graphify:          false,
+      graphify_topK:     2,
+      tier:              1,
+      halfLifeHours:     8,
+      timeWindowHours:   168,
+      recentMultiplier:  1.2,
+      mediumDecay:       0.7,
+    },
+    EVENT: {
+      weights:           { semantic: 0.2, time_decay: 0.6, confidence: 0.2 },
+      prefilter:         ['personal_memories', 'memory_summaries', 'memories'],
+      graphify:          false,
+      graphify_topK:     2,
+      tier:              1,
+      halfLifeHours:     0.5,    // 30分钟半衰期，极度近期优先
+      timeWindowHours:   2,
+      recentMultiplier:   2.5,    // 强强化：1h内时间贡献×2.5
+      mediumDecay:       0.2,
+    },
+    PERSON: {
+      weights:           { semantic: 0.5, time_decay: 0.3, confidence: 0.2 },
+      prefilter:         ['personal_memories', 'memory_summaries', 'memories'],
+      graphify:          false,
+      graphify_topK:     2,
+      tier:              1,
+      halfLifeHours:     4,
+      timeWindowHours:   72,
+      recentMultiplier:  1.3,
+      mediumDecay:       0.6,
+    },
+    DEFAULT: {
+      weights:           { semantic: 0.5, time_decay: 0.3, confidence: 0.2 },
+      prefilter:         ['memory_summaries', 'memories', 'personal_memories'],
+      graphify:          false,
+      graphify_topK:     2,
+      tier:              2,
+      halfLifeHours:     2,
+      timeWindowHours:   24,
+      recentMultiplier:  1.5,
+      mediumDecay:       0.4,
+    },
+  },
+
+  // 意图分类关键词
+  intentKeywords: {
+    FACTUAL:    ['是什么', '多少', '哪个', 'who is', 'what is', 'how many', 'whose', '谁的'],
+    PREFERENCE: ['喜欢', '偏好', '习惯', '风格', 'prefer', 'favorite', '爱', '想要'],
+    EVENT:      ['上次', '之前', '上周', '昨天', '那天', 'when', 'last time', '以前'],
+    PROJECT:    ['项目', '成员', '进度', '版本', 'milestone', 'sprint', '需求', '迭代'],
+    PERSON:     ['谁', '某人', '他是', '她是', '他们怎么', 'who'],
+    REASONING:  ['为什么', '怎么想到', 'why', 'how come', 'reason', '原因'],
+  },
+
+  // ─── Proactive 召回配置（Week 2） ──────────────────────────
+  proactive: {
+    topicShiftThreshold: 0.3,   // 关键词重叠率阈值，低于此值判定为话题切换
+    idleMinutes: 30,            // 长时间沉默阈值（分钟）
+    newSessionTopK: 10,         // 新 session 预加载记忆数量
+    last30MinWindow: 30 * 60 * 1000,  // 30 分钟召回时间窗口
+    maxDialogueMessages: 20,                // 对话摘要最大消息条数
+    maxDialogueTokens: 1500,                // 对话摘要最大 token 数
+    maxSummaryQueryLen: 150,    // summary 作为 recall query 的最大字符数
+    minSummaryQueryLen: 30,     // summary 最小有效长度，低于此值 fallback 到随机 query
+    maxSessionAgeHours: 48,     // session 陈旧阈值（小时），超过则扩大召回范围
+    recentSummaryCount: 3,      // 方案A: 新 session preload 直接取最新 N 条 summary（绕过向量召回）
+  },
+
+  // 技术类意图正则（独立配置，支持复杂模式）
+  intentTechnicalPatterns: [
+    // 基础代码模式
+    /代码|函数|class |def |import |require\(|报错|bug|error/i,
+    /api|route|endpoint|config|数据库|db|sql|docker|pm2|nginx/i,
+    /\/[a-zA-Z_]+\.(py|js|ts|vue|tsx|go|java|rs)/,
+    /\b(function|const |let |var |=>)\b/,
+    /\b(redis|mongo|postgresql|mysql|sqlite)/i,
+    /\b(deploy|ci\/cd|pipeline|kubernetes|k8s)/i,
+    // 中文技术词汇
+    /部署|编译|构建|日志|监控|调试|接口|SDK|容器/i,
+    /缓存穿透|雪崩|限流|熔断|降级|负载均衡/i,
+    /微服务|分布式|集群|节点|实例/i,
+    /线程|进程|异步|同步|阻塞|非阻塞/i,
+    /序列化|反序列化|编解码|协议|HTTP|gRPC/i,
+    // 新增：扩展技术词汇（2026-04-20）
+    /graphify|hook|plugin|extension|module|package/i,
+    /json|yaml|toml|xml|config|cfg/i,
+    /脚本|shell|bash|python|node|npm|yarn/i,
+    /git|github|gitlab|commit|branch|push|pull/i,
+    /mqtt|websocket|sse|stream|streaming/i,
+    /vector|embedding|cosine|hnsw|pgvector/i,
+    /prompt|llm|model|token|temperature/i,
+    /memory|recall|summary|extractor|archiver/i,
+    /gateway|openclaw|webhook|websocket/i,
+    // 新增：ollama/bge-m3/session漏报修复（2026-04-20）
+    /ollama|bge-m3|keep_alive|session|会话/i,
+  ],
+
+  // 级联召回配置（Week 3）
+  cascadeRecallConfig: {
+    enabled: true,
+    triggerKeywords: ['上次', '之前说过', '我记得', '上次聊', '继续', '接着'],
+    minQueryLength: 4,
+    defaultTimeWindow: 3,
+  },
+};

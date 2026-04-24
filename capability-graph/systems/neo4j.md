@@ -2,11 +2,12 @@
 
 ## 基本信息
 - **类型**：图数据库
-- **端口**：7687（主脑）/ 7688（副脑）
+- **端口**：7687（记忆链路）/ 7688（问题追踪）
 - **状态**：✅ 正常
 - **规模**：170 万+ 节点
 
-## 主脑图数据
+## 记忆链路图数据（7687）
+
 | 节点类型 | 数量 |
 |---------|------|
 | Person/Work/Place 等 | 170 万+ |
@@ -14,13 +15,15 @@
 | GraphifyCode | 28 |
 | Memory_summary | 318+ |
 
-## 副脑图数据
+## 问题追踪图数据（7688）
+
 | 节点类型 | 说明 |
 |---------|------|
 | Thread | 问题 Thread |
 | Session | Session 节点 |
 
 ## 同步机制
+
 | 机制 | 路径 |
 |------|------|
 | 实时同步 | summary-extractor.js 内嵌 |
@@ -28,10 +31,11 @@
 | graph-linker | Redis Stream → Neo4j |
 
 ## 常用操作
+
 ```bash
 # 查询 PersonalMemory 节点
 MATCH (p:PersonalMemory) RETURN count(p)
 
-# 查询 Thread 节点（副脑）
+# 查询 Thread 节点
 MATCH (t:Thread) RETURN t
 ```

@@ -57,6 +57,28 @@
 - **适用场景**：摘要 → 原始对话追溯、核实决策背景、审计对话记录
 - **状态**：✅ 已创建
 
+### 经验固化与召回插件（Experience Memory Plugin）
+- **触发词**：经验固化、Skill经验、召回插件、成功路径、肌肉记忆
+- **架构**：
+  ```
+  用户消息 → before_prompt_build Hook
+              → 关键词匹配 skill
+              → 查询 skill_best_paths
+              → 注入【技能经验】到 prompt
+             ↓
+  AI 执行 exec → agent_end Hook
+              → 解析 tool_calls 匹配 custom-skills 路径
+              → UPSERT skill_experiences + skill_best_paths
+  ```
+- **数据库**：`openclaw_experience`（独立库，3张表）
+  - `skill_experiences`：append-only 经验日志
+  - `skill_best_paths`：最佳路径聚合
+  - `skill_recall_cache`：召回缓存
+- **插件路径**：`~/.openclaw/extensions/experience-memory-plugin/`
+- **Hook**：`before_prompt_build`（召回注入）+ `agent_end`（执行记录）
+- **隔离保证**：独立 DB 连接池（MAX=5），零侵入主脑 openclaw_memory
+- **状态**：✅ 已部署（2026-04-24）
+
 ### 主脑（记忆链路系统）
 
 > **⚠️ 绝对禁区**：未经主人灵须子明确授权，不得对主脑任何组件进行任何操作。

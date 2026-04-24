@@ -198,23 +198,92 @@
 
 > **2026-04-23 recall-hook 修复**：session-context-loader 的 conversation-archiver 依赖内联，memory-garbage-collector 和 reasoning-pattern-manager 以 stub 替代（核心 recall 功能不受影响）。
 
-#### 七、副脑 Problem Thread
+#### 七、副脑 Problem Thread（Thread 使用手册）
 
+> **定位**：玄枢的任务追踪系统。所有需要持续跟进的复杂任务/问题，都必须进入 Thread 管理。
 > 恢复脚本：`bash /home/ai/backups/restore-brain.sh`（含自动回滚备份）
+
+##### 7.1 触发词
+
+| 场景 | 触发词 |
+|------|--------|
+| 复杂任务开始 | 启动卓越模式、开始调研、开始分析、开始设计 |
+| 多步骤任务 | 分步执行、分阶段、持续跟进 |
+| 问题追踪 | 跟踪进度、任务状态、查看 Thread |
+| 团队协作 | 分配任务、协同、交给 XX |
+
+##### 7.2 核心原则
+
+> **铁律**：主脑 Problem Thread 是所有工作的第一公民。
+> - 所有任务必须关联 Thread，禁止先执行后补记录
+> - Session 结束前必须更新 Thread 状态
+> - 完成任务立即归档（done），不得拖延
+
+##### 7.3 API 完整手册
+
+**Base URL**：`http://localhost:54321`
+
+| 方法 | 端点 | 说明 | 示例 |
+|------|------|------|------|
+| `GET` | `/threads` | 列出所有 Thread | `?status=active` 筛选活跃 |
+| `GET` | `/threads/:id` | 获取单个 Thread（含所有 Stage） | — |
+| `POST` | `/threads` | 新建 Thread | body: `{title, domain, status}` |
+| `POST` | `/threads/:id/stages` | 追加 Stage（分析/决策/实施/验证） | body: `{stage, content}` |
+| `PATCH` | `/threads/:id/stage` | 更新当前 Stage 内容 | body: `{stage, content}` |
+| `PATCH` | `/threads/:id/status` | 更新 Thread 状态 | body: `{"status":"completed"}` |
+| `DELETE` | `/threads/:id` | 删除 Thread | — |
+
+**Status 值**：`new` → `active` → `completed` / `cancelled`
+**Stage 值**：`problem` → `analysis` → `decision` → `implementation` → `verification`
+
+##### 7.4 使用示例
+
+**新建 Thread（必须获得主人授权）**：
+```bash
+curl -s -X POST "http://localhost:54321/threads" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "任务名称",
+    "domain": ["project","tech"],
+    "status": "new",
+    "stage": "problem",
+    "content": { "description": "问题描述" }
+  }'
+```
+
+**追加分析 Stage**：
+```bash
+curl -s -X POST "http://localhost:54321/threads/<id>/stages" \
+  -H "Content-Type: application/json" \
+  -d '{"stage": "analysis", "content": {"records": [{"time": "...", "content": "..."}]}}'
+```
+
+**标记完成**：
+```bash
+curl -s -X PATCH "http://localhost:54321/threads/<id>/status" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "completed"}'
+```
+
+**查看活跃 Thread**：
+```bash
+curl -s "http://localhost:54321/threads?status=active" | python3 -m json.tool
+```
+
+##### 7.5 服务信息
 
 | 服务 | 端口 | 说明 |
 |------|------|------|
-| Problem Thread API | 54321 | 独立 Docker，7条 Thread 完整 |
+| Problem Thread API | 54321 | 独立 Docker |
 | pt-postgres | 54320 | 独立数据库，problem_threads 表 |
-| pt-neo4j | 7688 | 关系图谱 |
+| pt-neo4j | 7688 | 关系图谱（备用） |
 
-**API端点**（Base URL: `http://localhost:54321`）：
-- `GET /threads` — 列出所有 threads
-- `GET /threads/:id` — 获取单个 thread
-- `POST /threads` — 新建 thread
-- `POST /threads/:id/stages` — 追加 Stage
-- `PATCH /threads/:id/status` — 更新状态（body: `{"status":"completed"}`）
-- `POST /sessions/:id/summary` — 推送 session 摘要
+##### 7.6 插件集成
+
+OpenClaw 插件：`~/.openclaw/extensions/problem-thread-plugin/`
+- 插件 ID：`problem-thread-plugin`
+- 已在 `plugins.allow` 名单中
+- 注册 Hook：`before_prompt_build`（Thread 上下文自动注入）
 
 #### 八、Redis 数据结构
 

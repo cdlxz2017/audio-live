@@ -117,6 +117,19 @@
 |  | 全局配置 | 全链路 |
 |  | Proactive 上下文加载 | 链路D |
 |  | Graphify 代码对齐 | 链路D |
+
+#### 四、恢复脚本
+
+> ⚠️ 仅在确认需要恢复时使用，执行前请确认备份文件存在
+
+| 脚本 | 说明 |
+|------|------|
+| `bash /home/ai/backups/restore-brain.sh` | **一键恢复**：主脑 + 副脑 + 经验插件（自动停止服务 → 覆盖文件 → 重启） |
+| `bash /home/ai/backups/restore-brain.sh openclaw_config` | 额外恢复 OpenClaw 配置（慎用） |
+
+**备份文件位置**：`/home/ai/backups/backup-20260424-101052/`
+
+**回滚**：如恢复后需回滚，文件在 `/home/ai/backups/*-pre-restore-*`
 |  | 模块E：冷存储激活 | 链路D后 |
 |  | 模块F：推理模式 | 链路D后 |
 |  | 模块D：置信度检测触发 | 链路D后 |
@@ -164,6 +177,8 @@
 > **2026-04-23 recall-hook 修复**：session-context-loader 的 conversation-archiver 依赖内联，memory-garbage-collector 和 reasoning-pattern-manager 以 stub 替代（核心 recall 功能不受影响）。
 
 #### 七、副脑 Problem Thread
+
+> 恢复脚本：`bash /home/ai/backups/restore-brain.sh`（含自动回滚备份）
 
 | 服务 | 端口 | 说明 |
 |------|------|------|

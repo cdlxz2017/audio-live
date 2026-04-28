@@ -1104,6 +1104,108 @@ sudo ./install-run.sh
 
 ---
 
+## 三界守护者主动监控体系（Sanctuary Guardian）
+
+> **触发词**：三界守护者、主动监控、守护者、系统监控、健康巡检
+> **状态**：✅ 已部署（2026-04-29）
+
+### 架构概览
+
+三层监控体系，覆盖 AI核心层 + 业务服务层 + 基础设施层：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  L1 系统层（现有 daily-health-check）                    │
+│  PM2进程 · 端口 · 磁盘 · CPU · 内存 · 网络            │
+├─────────────────────────────────────────────────────────┤
+│  L2 业务层（business-health-check.js，每小时）          │
+│  天道四院 · 成员管理 · 民宿 · OpenClaw Admin            │
+├─────────────────────────────────────────────────────────┤
+│  L3 AI核心层（ai-core-health-check.js，每小时）         │
+│  主脑PG · 副脑Thread · Redis · Neo4j · BGE-m3          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 核心文件
+
+| 文件 | 职责 |
+|------|------|
+| `scripts/business-health-check.js` | L2 业务层检查（天道四院Nginx端口/民宿/成员管理）|
+| `scripts/ai-core-health-check.js` | L3 AI核心层检查（PG/Redis/Neo4j/Ollama/BGE-m3）|
+| `scripts/alert-handler.js` | 告警处理核心（检测→创建Thread→触发调查→发邮件）|
+| `system-inventory/SYSTEM-INVENTORY.md` | 全系统盘存文档 |
+
+### Cron 任务（共9个）
+
+| 任务 | 调度 | 检查层 |
+|------|------|--------|
+| daily-health-check | 每天09:00 | L1 系统层 |
+| memory-integrity-check | 每30分钟 | 主脑记忆链路 |
+| L2-业务层健康检查 | 每小时 | L2 业务层 |
+| L3-AI核心层健康检查 | 每小时（:15分）| L3 AI核心层 |
+| task-blocked-check | 每天09:00 | 任务阻塞 |
+| OpenClaw-Auto-Updater | 每天10:00 | 版本更新 |
+| 每日任务提醒 | 每天20:00 | 任务列表 |
+
+### 告警链路
+
+```
+定时检查发现异常
+    ↓
+alert-handler.js（防重幂等）
+    ↓
+自动创建 Thread（带初步诊断）
+    ↓
+触发卓越调查（isolated session）
+    ↓
+邮件通知 cdlxz2017@qq.com
+    ↓
+① 主人处理 → Thread done
+② 超24h未处理 → 下次 session 启动时提醒
+```
+
+### 检查命令
+
+```bash
+# L2 业务层（当前结果：✅ 8/8 通过）
+node /home/ai/.openclaw/workspace/scripts/business-health-check.js
+
+# L3 AI核心层（当前结果：✅ 16/16 通过）
+node /home/ai/.openclaw/workspace/scripts/ai-core-health-check.js
+
+# L1 系统层（PM2 + 磁盘 + 内存）
+node /home/ai/.openclaw/workspace/scripts/daily-health-check.js
+
+# 单独检查某项
+node /home/ai/.openclaw/workspace/scripts/alert-handler.js --check=session-summary-extractor
+node /home/ai/.openclaw/workspace/scripts/alert-handler.js --check=bge-m3
+node /home/ai/.openclaw/workspace/scripts/alert-handler.js --check=redis-queue
+```
+
+### 覆盖清单（2026-04-29盘存）
+
+| 层级 | 检查项 | 方法 |
+|------|--------|------|
+| L1 | PM2 进程（26个在线）| PM2 API |
+| L1 | 磁盘使用率 | df -h |
+| L1 | PM2日志大小 | du -sh ~/.pm2/logs/ |
+| L2 | 天道四院（灵枢/因果/洞鉴/雷亟）| Nginx HTTPS :3021-3024 |
+| L2 | 成员管理 Nginx :8443 | HTTPS |
+| L2 | 灵一民宿 :3001 | HTTP |
+| L2 | OpenClaw Admin :3031 | HTTP |
+| L3 | 主脑 PostgreSQL | SQL: SELECT 1 |
+| L3 | 副脑 Thread API | HTTP /health |
+| L3 | Redis 连通性 + Stream队列 | ioredis |
+| L3 | Neo4j 连通性 | HTTP API |
+| L3 | BGE-m3 Ollama | /api/tags |
+| L3 | session-summary-extractor | PM2 进程状态 |
+| L3 | outbox-writer | PM2 进程状态 |
+| L3 | graph-linker | PM2 进程状态 |
+| L3 | hermes-server | PM2 进程状态 |
+| L3 | 活跃Thread数量 | API 查询 |
+
+---
+
 ## 安全系统
 
 ### OSSEC HIDS（主机入侵检测）
@@ -1406,6 +1508,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 远程录音 | ✅ 运行中 |
 | 记忆系统 | ✅ 运行中（7/7进程，session-extractor 已移除）|
 | 三层记忆追溯 | ✅ 已创建 |
+| 三界守护者监控体系 | ✅ 运行中（L1/L2/L3三层，2026-04-29部署）|
 | 自我监控 | ✅ 运行中 |
 | 邮件系统 | ✅ 正常 |
 | 天道成员管理平台 | ✅ 运行中（HTTPS 前后端）|
@@ -1418,7 +1521,7 @@ cd ~/.config && git add . && git commit -m "描述"
 | 反思系统 | ✅ 已修复 |
 | Tech Knowledge | ✅ 可用 |
 | OSSEC HIDS | ✅ 运行中（6进程）|
-| fail2ban | ✅ 运行中 |
+| fail2ban | ✅ 运行中（7个jail，filter已修复）|
 | UFW 防火墙 | ✅ 已激活 |
 | 蜜罐防御系统 | ✅ 全部生效 |
 | 天雷系统 | ✅ 已部署 |
@@ -1610,4 +1713,4 @@ bash /home/ai/.openclaw/workspace/memory-system-rollback/rollback-dongjian.sh
 
 ---
 
-_最后更新：2026-04-24（灵枢院上线 + PM2自启 + HTTPS唯一入口）_
+_最后更新：2026-04-29（三界守护者监控体系上线 + fail2ban修复 + L1/L2/L3三层防御）_

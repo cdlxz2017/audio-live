@@ -1096,7 +1096,7 @@ sudo ./install-run.sh
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| **Hermes Web UI** | http://100.89.109.20:31236 | 玄一网页控制台（推荐）|
+| **Hermes Web UI** | https://100.89.109.20:31237 | 玄一网页控制台（推荐，HTTPS）|
 | **Hermes API Server** | http://100.89.109.20:31235 | API接口（/health、/chat、/sessions）|
 
 - **PM2进程**：hermes-server（31235）、hermes-web（31236）均 ✅ online

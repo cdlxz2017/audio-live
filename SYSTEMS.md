@@ -1144,7 +1144,7 @@ sudo ./install-run.sh
 | L2-业务层健康检查 | 每小时 | L2 业务层 |
 | L3-AI核心层健康检查 | 每小时（:15分）| L3 AI核心层 |
 | task-blocked-check | 每天09:00 | 任务阻塞 |
-| OpenClaw-Auto-Updater | 每天10:00 | 版本更新 |
+| OpenClaw-Auto-Updater | 每天10:00 | 版本更新 | 脚本：scripts/openclaw-update-checker.sh · 下载目录：openclaw-releases/ · 已下载：2026.4.29（22MB）|
 | 每日任务提醒 | 每天20:00 | 任务列表 |
 
 ### 告警链路

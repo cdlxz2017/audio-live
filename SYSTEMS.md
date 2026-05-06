@@ -770,12 +770,12 @@ node audit-scripts/audit-monitor.js                         # 监控检查
 - **服务端口**：
   | 服务 | 端口 | 说明 |
   |------|------|------|
-  | tiandao-member | 3002 | 成员管理 |
-  | tiandao-auth | 3004 | 认证服务 |
+  | ~~tiandao-member~~ | ~~3002~~ | ⚠️ 2026-05-06 已从 PM2 删除（未启用） |
+  | ~~tiandao-auth~~ | ~~3004~~ | ⚠️ 2026-05-06 已从 PM2 删除（未启用） |
   | ~~tiandao-karma~~ | ~~3006~~ | ~~业力系统（已废弃）~~ |
-  | tiandao-worldevent | 3011 | 现实事件接入 |
-  | tiandao-admin-app | 3013 | 管理后台API |
-- **状态**：✅ 运行中（PM2）
+  | ~~tiandao-worldevent~~ | ~~3011~~ | ⚠️ 2026-05-06 已从 PM2 删除（未启用） |
+  | ~~tiandao-admin-app~~ | ~~3013~~ | ⚠️ 2026-05-06 已从 PM2 删除（未启用） |
+- **状态**：⚠️ 以上5个服务已清理，仅保留 tiandao_members（8443）和四院
 
 ---
 

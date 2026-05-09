@@ -5,14 +5,14 @@ on:
     branches: [main, master]
     paths:
       - 'scripts/**'
+      - 'muxun/**'
       - '.github/workflows/governance-check.yml'
-      - 'governance.json'
   push:
     branches: [main, master]
     paths:
       - 'scripts/**'
+      - 'muxun/**'
       - '.github/workflows/governance-check.yml'
-      - 'governance.json'
   workflow_dispatch:
 
 jobs:
@@ -50,7 +50,7 @@ jobs:
           GOV_JSON: ${{ github.workspace }}/governance.json
         run: |
           if [[ -f "$GOV_JSON" ]]; then
-            bash scripts/governance-ci-check.sh
+            bash muxun/governance-ci-check.sh
           else
             echo "跳过: governance.json 不可用"
             echo "如需完整检查，请在仓库中提交 governance.json 或设置 GOV_REGISTRY_JSON secret"

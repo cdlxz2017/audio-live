@@ -1,0 +1,96 @@
+name: 牧巡 Governance Check (L2)
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/governance-check.yml'
+      - 'governance.json'
+  push:
+    branches: [main, master]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/governance-check.yml'
+      - 'governance.json'
+  workflow_dispatch:
+
+jobs:
+  governance-check:
+    name: 脚本合规检查
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq sqlite3 >/dev/null 2>&1
+
+      - name: 获取 Registry 数据
+        env:
+          GOV_REGISTRY_JSON: ${{ secrets.GOV_REGISTRY_JSON }}
+        run: |
+          # 如果提供了 GitHub Secret（base64 编码的 governance.json），直接使用
+          if [[ -n "$GOV_REGISTRY_JSON" ]]; then
+            echo "$GOV_REGISTRY_JSON" | base64 -d > governance.json
+            echo "使用 GitHub Secret 中的 Registry 数据"
+          elif [[ -f "governance.json" ]]; then
+            echo "使用仓库中的 governance.json"
+          else
+            echo "警告: 未找到 governance.json，跳过 L2 检查"
+            echo "请设置 GOV_REGISTRY_JSON secret 或提交 governance.json 到仓库"
+          fi
+
+      - name: 运行牧巡 L2 检查
+        env:
+          GOV_REGISTRY_JSON: ${{ secrets.GOV_REGISTRY_JSON }}
+          GOV_JSON: ${{ github.workspace }}/governance.json
+        run: |
+          if [[ -f "$GOV_JSON" ]]; then
+            bash scripts/governance-ci-check.sh
+          else
+            echo "跳过: governance.json 不可用"
+            echo "如需完整检查，请在仓库中提交 governance.json 或设置 GOV_REGISTRY_JSON secret"
+          fi
+
+      - name: 上传失败报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-report
+          path: governance.json
+          retention-days: 3
+
+  # -------------------------------------------------------------------------
+  # 备选：轻量级检查（无需 Registry，适用于临时贡献者 PR）
+  # -------------------------------------------------------------------------
+  lightweight-check:
+    name: 轻量级检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: sudo apt-get install -y -qq jq >/dev/null 2>&1
+
+      - name: 仅检查凭证模式
+        run: |
+          FOUND=0
+          for f in $(find scripts -type f \( -name "*.sh" -o -name "*.js" -o -name "*.py" \) 2>/dev/null | grep -vE '(\.bak$|__pycache__|health-check-[0-9])'); do
+            if grep -qiP "password[[:space:]]*=[[:space:]]*['\"][^$@{]{3,30}" "$f" 2>/dev/null; then
+              echo "⚠ 凭证模式: $f"
+              FOUND=1
+            fi
+            if grep -qiP "sk-[a-zA-Z0-9]{20,}" "$f" 2>/dev/null; then
+              echo "⚠ API Key 模式: $f"
+              FOUND=1
+            fi
+          done
+          if [[ $FOUND -eq 1 ]]; then
+            echo "发现凭证模式，请修复后重试"
+            exit 1
+          fi
+          echo "✓ 无硬编码凭证"
